@@ -20,8 +20,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
-    width: 280,  // Breedte van het kader in pixels
-    height: 100, // Hoogte van het kader in pixels
+    width: 320,  // Breedte van het kader in pixels (iets breder voor meer context)
+    height: 120, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
   };
 
   // Initialiseer de Tesseract worker
@@ -31,12 +31,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       // Optimaliseer Tesseract voor cijferherkenning
       await workerRef.current.setParameters({
         tessedit_char_whitelist: '0123456789',
-        tessedit_pageseg_mode: '7', // Behandel afbeelding als een enkele tekstregel
+        tessedit_pageseg_mode: '6', // Behandel als één tekstblok
         tessjs_create_hocr: '0',
         tessjs_create_tsv: '0',
         tessjs_create_box: '0',
         tessjs_create_unlv: '0',
-        tessjs_create_osd: '0'
+        tessjs_create_osd: '0',
+        tessedit_ocr_engine_mode: '2', // LSTM-engine
+        user_patterns_file: '11111,2222,3333,4444,55555', // Patroonherkenning voor cijferreeksen
+        textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
+        textord_min_linesize: '2.5' // Minimale lijndikte
       });
     };
 
@@ -54,26 +58,58 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
     
-    // Verhoog contrast
-    const factor = 2.5; // Contrast verhogen
-    const intercept = 128 * (1 - factor);
-    
+    // Eerste stap: omzetten naar grijswaarden
     for (let i = 0; i < data.length; i += 4) {
-      // Converteer naar grayscale voor eenvoudigere verwerking
       const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      
-      // Pas contrast aan
-      const adjusted = factor * gray + intercept;
-      
-      // Binarisatie met drempelwaarde 128
-      const threshold = 128;
-      const result = adjusted > threshold ? 255 : 0;
-      
-      // Update alle kanalen
-      data[i] = data[i + 1] = data[i + 2] = result;
+      data[i] = data[i + 1] = data[i + 2] = gray;
     }
     
+    // Tweede stap: contrast verhogen (stretch histogram)
+    let min = 255;
+    let max = 0;
+    
+    // Vind min en max waarden
+    for (let i = 0; i < data.length; i += 4) {
+      if (data[i] < min) min = data[i];
+      if (data[i] > max) max = data[i];
+    }
+    
+    // Als er voldoende contrast is
+    if (max > min) {
+      const range = max - min;
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = data[i + 1] = data[i + 2] = Math.round(((data[i] - min) / range) * 255);
+      }
+    }
+    
+    // Derde stap: binaire drempelwaarde (verhoogt contrast voor cijfers)
+    const threshold = 125;
+    for (let i = 0; i < data.length; i += 4) {
+      const val = data[i] > threshold ? 255 : 0;
+      data[i] = data[i + 1] = data[i + 2] = val;
+    }
+    
+    // Plaats de verwerkte afbeelding terug op het canvas
     ctx.putImageData(imageData, 0, 0);
+    
+    // Extra stap: rand toevoegen rondom het beeld (helpt Tesseract)
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width + 20;
+    tempCanvas.height = canvas.height + 20;
+    const tempCtx = tempCanvas.getContext('2d');
+    
+    // Witte achtergrond maken
+    tempCtx.fillStyle = '#FFFFFF';
+    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+    
+    // Plaats het originele canvas met een marge
+    tempCtx.drawImage(canvas, 10, 10);
+    
+    // Kopieer terug naar het originele canvas (vergroot het eerst)
+    canvas.width = tempCanvas.width;
+    canvas.height = tempCanvas.height;
+    ctx.drawImage(tempCanvas, 0, 0);
+    
     return canvas;
   };
 
@@ -133,8 +169,27 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         console.log("Gevonden getallen:", numbersFound);
         
         if (numbersFound && numbersFound.length > 0) {
-          // We verwijderen de beperking op 4 cijfers en nemen gewoon het eerste nummer
-          const number = numbersFound[0];
+          // Neem de langste gedetecteerde cijferreeks (meestal accurater)
+          // Of als er getallen met 4 cijfers zijn, geef die voorrang
+          let bestNumber = '';
+          let maxLength = 0;
+          
+          // Eerst zoeken naar 4-cijferige getallen (vaak eendnummers)
+          const fourDigitNumbers = numbersFound.filter(num => num.length === 4);
+          if (fourDigitNumbers.length > 0) {
+            bestNumber = fourDigitNumbers[0];
+          } else {
+            // Anders het langste getal nemen
+            for (const num of numbersFound) {
+              if (num.length > maxLength) {
+                maxLength = num.length;
+                bestNumber = num;
+              }
+            }
+          }
+          
+          // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
+          const number = bestNumber;
           
           // Als we bezig zijn met verificatie
           if (verificationInProgress && lastDetectedNumber) {
@@ -435,12 +490,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
             playsInline
             className="w-full max-w-md h-auto"
             onPlay={() => setIsStreaming(true)}
+            style={{ 
+              transform: 'scaleX(1)', // Schaal niet spiegelen op mobiel (betere OCR)
+              maxHeight: '60vh',       // Beperk hoogte
+              objectFit: 'cover',      // Vul het kader
+              backgroundColor: '#000'  // Zwarte achtergrond
+            }}
           />
           
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
-          {/* Scan-kader overlay */}
+          {/* Scan-kader overlay met duidelijkere instructies */}
           {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
               <div 
@@ -452,8 +513,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
                 }}
               >
                 <div className="w-full h-full flex items-center justify-center">
-                  <span className="text-white drop-shadow-lg font-bold text-sm">
-                    Plaats het nummer in dit kader
+                  <span className="text-white drop-shadow-lg text-sm text-center px-2">
+                    Plaats het nummer in dit kader <br/> 
+                    <small>Houd het beeld stabiel</small>
                   </span>
                 </div>
               </div>
@@ -462,7 +524,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
           
           {/* Status indicator voor scannen */}
           {isStreaming && (
-            <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-50 text-white p-2 rounded">
+            <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-70 text-white p-2 rounded">
               <div className="flex items-center">
                 {isProcessing && (
                   <div className="animate-pulse w-3 h-3 bg-red-500 rounded-full mr-2"></div>
