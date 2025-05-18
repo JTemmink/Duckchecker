@@ -24,8 +24,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
-    width: 150,  // Breedte van het kader in pixels (iets breder voor meer context)
-    height: 80, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
+    width: 180,  // Breedte van het kader in pixels (iets breder voor meer context)
+    height: 70, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
   };
 
   // Initialiseer de Tesseract worker
@@ -33,9 +33,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     const initWorker = async () => {
       workerRef.current = await createWorker('eng');
       // Optimaliseer Tesseract voor cijferherkenning
+      // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
       await workerRef.current.setParameters({
         tessedit_char_whitelist: '0123456789',
-        tessedit_pageseg_mode: '6', // Behandel als één tekstblok
+        tessedit_pageseg_mode: '7', // Behandel als één regel tekst (beter voor breed kader)
         tessjs_create_hocr: '0',
         tessjs_create_tsv: '0',
         tessjs_create_box: '0',
@@ -49,6 +50,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         preserve_interword_spaces: '0', // Geen spaties behouden tussen cijfers
         tessedit_do_invert: '0', // Geen inversie
         segment_nonalphabetic_script: '1', // Betere segmentatie voor cijfers
+        textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
       });
     };
 
@@ -68,20 +70,30 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
     
-    // EENVOUDIGE BEELDVERWERKING - terug naar basisaanpak
-    // Contrast verhogen en naar zwart-wit converteren
-    const factor = 2.5; // Contrast verhogen 
+    // VERBETERDE BEELDVERWERKING VOOR BREDER KADER
+    // Bij bredere afbeeldingen moet je meer letten op contrast
+    const factor = 3.0; // Hoger contrast voor betere cijferherkenning in breder kader
     const intercept = 128 * (1 - factor);
     
+    // Bereken gemiddelde helderheid om adaptieve threshold te bepalen
+    let totalBrightness = 0;
     for (let i = 0; i < data.length; i += 4) {
-      // Grayscale conversie - standaard formule
+      const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      totalBrightness += gray;
+    }
+    const avgBrightness = totalBrightness / (data.length / 4);
+    
+    // Bepaal een dynamische threshold op basis van de helderheid
+    const threshold = avgBrightness > 128 ? 140 : 120;
+    
+    for (let i = 0; i < data.length; i += 4) {
+      // Verbeterde grayscale conversie - standaard formule
       const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
       
       // Contrast aanpassen
       const adjusted = factor * gray + intercept;
       
-      // Binaire conversie (zwart-wit) met vaste drempelwaarde
-      const threshold = 128;
+      // Binaire conversie (zwart-wit) met dynamische drempelwaarde
       const result = adjusted > threshold ? 255 : 0;
       
       // Alle kleurkanalen gelijk maken
@@ -166,13 +178,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         
         // TESSERACT PARAMETERS AANPASSEN
         // Geoptimaliseerde parameters voor cijferherkenning
+        // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
         await workerRef.current.setParameters({
           tessedit_char_whitelist: '0123456789',
-          tessedit_pageseg_mode: '7', // Behandel als één regel tekst
+          tessedit_pageseg_mode: '7', // Behandel als één regel tekst (ideaal voor breder kader)
           preserve_interword_spaces: '0', // Geen spaties tussen cijfers
           classify_bln_numeric_mode: '1', // Speciaal voor numerieke tekst
           textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
           textord_min_linesize: '2.5', // Minimale lijndikte
+          tessjs_create_hocr: '0', // Schakel HOCR uit voor snelheid
+          tessjs_create_tsv: '0', // Schakel TSV uit voor snelheid
+          tessjs_create_box: '0', // Schakel box files uit voor snelheid
+          textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
         });
         
         const { data } = await workerRef.current.recognize(
@@ -597,8 +614,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
                       <>Scanning<span className="animate-pulse">...</span></>
                     ) : (
                       <>
-                        Plaats het nummer in dit kader <br/> 
-                        <small>Houd het beeld stabiel</small>
+                         <br/> 
+                        <small></small>
                       </>
                     )}
                   </span>
