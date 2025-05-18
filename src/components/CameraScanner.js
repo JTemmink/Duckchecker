@@ -21,6 +21,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const [showDebug, setShowDebug] = useState(false);
   const [debugImage, setDebugImage] = useState(null);
   const [useImageProcessing, setUseImageProcessing] = useState(true);
+  const [ocrQuality, setOcrQuality] = useState('balanced');
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -32,26 +33,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   useEffect(() => {
     const initWorker = async () => {
       workerRef.current = await createWorker('eng');
-      // Optimaliseer Tesseract voor cijferherkenning
-      // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
-      await workerRef.current.setParameters({
-        tessedit_char_whitelist: '0123456789',
-        tessedit_pageseg_mode: '7', // Behandel als één regel tekst (beter voor breed kader)
-        tessjs_create_hocr: '0',
-        tessjs_create_tsv: '0',
-        tessjs_create_box: '0',
-        tessjs_create_unlv: '0',
-        tessjs_create_osd: '0',
-        tessedit_ocr_engine_mode: '2', // LSTM-engine
-        user_patterns_file: '11111,2222,3333,4444,55555', // Patroonherkenning voor cijferreeksen
-        textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
-        textord_min_linesize: '2.5', // Minimale lijndikte
-        classify_bln_numeric_mode: '1', // Speciaal voor numerieke tekst
-        preserve_interword_spaces: '0', // Geen spaties behouden tussen cijfers
-        tessedit_do_invert: '0', // Geen inversie
-        segment_nonalphabetic_script: '1', // Betere segmentatie voor cijfers
-        textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
-      });
+      // Roep de updateOcrParameters aan in plaats van directe parameters
+      await updateOcrParameters();
     };
 
     initWorker();
@@ -60,7 +43,70 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         workerRef.current.terminate();
       }
     };
-  }, []);
+  }, [ocrQuality]);
+
+  // Functie om OCR parameters te updaten op basis van kwaliteit
+  const updateOcrParameters = async () => {
+    if (!workerRef.current) return;
+    
+    // Basisinstellingen voor alle kwaliteitsniveaus
+    const baseParams = {
+      tessedit_char_whitelist: '0123456789',
+      tessjs_create_hocr: '0',
+      tessjs_create_tsv: '0',
+      tessjs_create_box: '0',
+      tessjs_create_unlv: '0',
+      tessjs_create_osd: '0',
+      segment_nonalphabetic_script: '1', // Betere segmentatie voor cijfers
+      textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
+    };
+    
+    // Kwaliteitsspecifieke parameters
+    let qualityParams = {};
+    
+    switch (ocrQuality) {
+      case 'fast':
+        qualityParams = {
+          tessedit_pageseg_mode: '7', // Eén regel tekst
+          tessedit_ocr_engine_mode: '3', // Alleen LSTM (sneller)
+          textord_heavy_nr: '1',
+          textord_min_linesize: '2.5',
+          classify_bln_numeric_mode: '1',
+          preserve_interword_spaces: '0',
+        };
+        break;
+        
+      case 'accurate':
+        qualityParams = {
+          tessedit_pageseg_mode: '6', // Blok tekst (nauwkeuriger voor getallen)
+          tessedit_ocr_engine_mode: '2', // LSTM (nauwkeuriger)
+          lstm_choice_mode: '2', // Meerdere opties evalueren
+          lstm_choice_iterations: '10', // Meer iteraties voor LSTM
+          textord_really_old_xheight: '0', // Moderne teksthoogte berekening
+          textord_force_make_prop_words: '0',
+          tessedit_do_invert: '0',
+          tessedit_good_quality_rating: '0.95',
+        };
+        break;
+        
+      default: // 'balanced'
+        qualityParams = {
+          tessedit_pageseg_mode: '7', 
+          tessedit_ocr_engine_mode: '2',
+          textord_heavy_nr: '1',
+          textord_min_linesize: '2.5',
+          classify_bln_numeric_mode: '1',
+          preserve_interword_spaces: '0',
+          tessedit_do_invert: '0',
+        };
+    }
+    
+    // Combineer basis en kwaliteitsparameters
+    const combinedParams = { ...baseParams, ...qualityParams };
+    
+    // Update Tesseract worker
+    await workerRef.current.setParameters(combinedParams);
+  };
 
   // Verwerk een afbeelding voordat OCR wordt uitgevoerd
   const preprocessImage = (canvas) => {
@@ -179,18 +225,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         // TESSERACT PARAMETERS AANPASSEN
         // Geoptimaliseerde parameters voor cijferherkenning
         // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
-        await workerRef.current.setParameters({
-          tessedit_char_whitelist: '0123456789',
-          tessedit_pageseg_mode: '7', // Behandel als één regel tekst (ideaal voor breder kader)
-          preserve_interword_spaces: '0', // Geen spaties tussen cijfers
-          classify_bln_numeric_mode: '1', // Speciaal voor numerieke tekst
-          textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
-          textord_min_linesize: '2.5', // Minimale lijndikte
-          tessjs_create_hocr: '0', // Schakel HOCR uit voor snelheid
-          tessjs_create_tsv: '0', // Schakel TSV uit voor snelheid
-          tessjs_create_box: '0', // Schakel box files uit voor snelheid
-          textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
-        });
+        await updateOcrParameters();
         
         const { data } = await workerRef.current.recognize(
           useImageProcessing ? processedImageData : originalImageData
@@ -300,7 +335,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, ocrQuality]);
 
   // Stop automatisch scannen met useCallback
   const stopAutoScan = useCallback(() => {
@@ -727,9 +762,41 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
                   </label>
                 </div>
                 
-                <p className="text-xs text-gray-600 mt-1">
-                  Als de OCR-herkenning niet goed werkt, probeer beeldverwerking in/uit te schakelen
-                </p>
+                <div className="mt-3">
+                  <label className="block mb-1 font-medium">OCR kwaliteit (snelheid/nauwkeurigheid):</label>
+                  <div className="grid grid-cols-3 gap-1">
+                    <button
+                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'fast' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+                      onClick={() => {
+                        setOcrQuality('fast');
+                        updateOcrParameters();
+                      }}
+                    >
+                      Snel
+                    </button>
+                    <button
+                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'balanced' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+                      onClick={() => {
+                        setOcrQuality('balanced');
+                        updateOcrParameters();
+                      }}
+                    >
+                      Gebalanceerd
+                    </button>
+                    <button
+                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'accurate' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+                      onClick={() => {
+                        setOcrQuality('accurate'); 
+                        updateOcrParameters();
+                      }}
+                    >
+                      Nauwkeurig
+                    </button>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">
+                    Nauwkeuriger OCR kost meer tijd maar kan beter werken bij lastige nummers
+                  </p>
+                </div>
               </div>
             </details>
           </div>
