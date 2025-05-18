@@ -24,8 +24,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
-    width: 320,  // Breedte van het kader in pixels (iets breder voor meer context)
-    height: 120, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
+    width: 150,  // Breedte van het kader in pixels (iets breder voor meer context)
+    height: 80, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
   };
 
   // Initialiseer de Tesseract worker
@@ -197,8 +197,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
               // Nummer is geverifieerd, verwerk het nu
               setDetectedNumber(number);
               
-              // Controleer of het nummer in de lijst voorkomt
-              const isValid = duckNumbers.includes(number);
+              // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
+              const isValid = validateNumber(number, duckNumbers);
               setIsValidNumber(isValid);
               
               setScanFeedback(`Nummer geverifieerd: ${number}`);
@@ -366,6 +366,24 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     startCamera();
   };
 
+  // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
+  const validateNumber = (detected, validNumbers) => {
+    if (!detected || !validNumbers || !validNumbers.length) return false;
+    
+    // Converteer het gedetecteerde nummer naar een string en verwijder whitespace
+    const cleanDetected = detected.toString().trim();
+    
+    // Debug logging
+    console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
+    console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
+    
+    // Check of het nummer in de lijst voorkomt (string vergelijking)
+    const isValid = validNumbers.includes(cleanDetected);
+    console.log(`In lijst: ${isValid}`);
+    
+    return isValid;
+  };
+
   // Voeg cijfer toe aan handmatige invoer
   const addDigit = (digit) => {
     const newInput = manualInput + digit;
@@ -373,7 +391,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     
     // Controleer het nummer direct na elke invoer
     setDetectedNumber(newInput);
-    const isValid = duckNumbers.includes(newInput);
+    const isValid = validateNumber(newInput, duckNumbers);
     setIsValidNumber(isValid);
   };
 

@@ -3,11 +3,19 @@ export async function loadDuckNumbers() {
     const response = await fetch('/ducknumber.csv');
     const csvText = await response.text();
     
-    // Verwerk de CSV data
+    // Verbeterde CSV verwerking:
+    // 1. Vervang nieuwe regels door komma's om één string te maken
+    // 2. Split op komma's om nummers te krijgen
+    // 3. Verwijder witruimtes, lege waarden en dubbelingen
     const numbers = csvText
+      .replace(/\r?\n/g, ',') // Vervang regeleinden door komma's
       .split(',')
-      .map(num => num.trim())
-      .filter(Boolean);
+      .map(num => num.trim()) // Verwijder witruimte
+      .filter(Boolean) // Verwijder lege waarden
+      .filter((value, index, self) => self.indexOf(value) === index); // Verwijder duplicaten
+    
+    console.log('Geladen nummers (eerste 5):', numbers.slice(0, 5));
+    console.log('Totaal aantal geladen nummers:', numbers.length);
     
     return numbers;
   } catch (error) {
