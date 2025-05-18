@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from 'react';
 // @ts-expect-error
-import CameraScanner from '../../components/CameraScanner';
+import CameraScanner from '../components/CameraScanner';
 // @ts-expect-error
-import { loadDuckNumbers } from '../../utils/loadCsv';
+import { loadDuckNumbers } from '../utils/loadCsv';
 
 export default function Home() {
   const [duckNumbers, setDuckNumbers] = useState<string[]>([]);

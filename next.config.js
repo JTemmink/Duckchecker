@@ -7,6 +7,9 @@ const nextConfig = {
   typescript: {
     // TypeScript controles overslaan tijdens het bouwen
     ignoreBuildErrors: true,
+  },
+  experimental: {
+    forceSwcTransforms: false
   }
 }
 
