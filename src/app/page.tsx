@@ -1,15 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-// @ts-expect-error
 import CameraScanner from '../components/CameraScanner';
-// @ts-expect-error
 import { loadDuckNumbers } from '../utils/loadCsv';
 
 export default function Home() {
   const [duckNumbers, setDuckNumbers] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastDetectedNumber, setLastDetectedNumber] = useState<string | null>(null);
+  const [lastValidationResult, setLastValidationResult] = useState<boolean | null>(null);
 
   useEffect(() => {
     async function fetchData() {
@@ -28,6 +28,11 @@ export default function Home() {
     fetchData();
   }, []);
 
+  const handleNumberDetected = (number: string, isValid: boolean) => {
+    setLastDetectedNumber(number);
+    setLastValidationResult(isValid);
+  };
+
   return (
     <main className="flex min-h-screen flex-col items-center p-4 sm:p-8">
       <h1 className="text-3xl font-bold mb-8 text-center">DuckCheck Nummer Scanner</h1>
@@ -43,7 +48,7 @@ export default function Home() {
         </div>
       ) : (
         <>
-          <CameraScanner duckNumbers={duckNumbers} />
+          <CameraScanner duckNumbers={duckNumbers} onNumberDetected={handleNumberDetected} />
           
           <div className="mt-8 text-center text-sm text-gray-500">
             <p>Deze app gebruikt je camera om nummers te scannen en te controleren of ze in de database voorkomen.</p>
