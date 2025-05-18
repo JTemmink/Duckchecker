@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-// Verwijderd: SetStateAction import die niet wordt gebruikt
 // @ts-expect-error
 import CameraScanner from '../components/CameraScanner';
 // @ts-expect-error

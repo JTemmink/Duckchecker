@@ -16,12 +16,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const intervalRef = useRef(null);
   const [isPaused, setIsPaused] = useState(false);
   
-  // Instellingen voor het scan-kader
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [scanFrame, setScanFrame] = useState({
+  // Instellingen voor het scan-kader (wordt gebruikt in de UI en captureImage)
+  const scanFrame = {
     width: 280,  // Breedte van het kader in pixels
     height: 100, // Hoogte van het kader in pixels
-  });
+  };
 
   // Initialiseer de Tesseract worker
   useEffect(() => {
@@ -76,35 +75,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     return canvas;
   };
 
-  // Stop automatisch scannen met useCallback
-  const stopAutoScan = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setScanFeedback('');
-    }
-  }, []);
-
-  // Start automatisch scannen met useCallback
-  const startAutoScan = useCallback(() => {
-    // Stop eventueel bestaande interval
-    stopAutoScan();
-    
-    // Geef feedback dat scannen is gestart
-    setScanFeedback('Automatisch scannen gestart...');
-    
-    // Start nieuwe interval
-    intervalRef.current = setInterval(() => {
-      if (!isProcessing && isStreaming && !isPaused) {
-        // Update tekst om te laten zien dat we scannen
-        setScanFeedback('Camera scant nu...');
-        captureImage();
-      }
-    }, 1000); // Scan elke seconde
-  }, [stopAutoScan, isProcessing, isStreaming, isPaused, setScanFeedback]);
-
   // Neem een snapshot en verwerk het met OCR
-  const captureImage = async () => {
+  const captureImage = useCallback(async () => {
     if (!isStreaming || isProcessing || !workerRef.current) return;
     
     setIsProcessing(true);
@@ -219,7 +191,34 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  };
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, scanFrame.height, scanFrame.width]);
+
+  // Stop automatisch scannen met useCallback
+  const stopAutoScan = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      setScanFeedback('');
+    }
+  }, []);
+
+  // Start automatisch scannen met useCallback
+  const startAutoScan = useCallback(() => {
+    // Stop eventueel bestaande interval
+    stopAutoScan();
+    
+    // Geef feedback dat scannen is gestart
+    setScanFeedback('Automatisch scannen gestart...');
+    
+    // Start nieuwe interval
+    intervalRef.current = setInterval(() => {
+      if (!isProcessing && isStreaming && !isPaused) {
+        // Update tekst om te laten zien dat we scannen
+        setScanFeedback('Camera scant nu...');
+        captureImage();
+      }
+    }, 1000); // Scan elke seconde
+  }, [stopAutoScan, isProcessing, isStreaming, isPaused, captureImage]);
 
   // Start de camera
   const startCamera = async () => {
@@ -266,23 +265,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const switchToCameraMode = () => {
     setIsManualMode(false);
     startCamera();
-  };
-
-  // Controleer handmatig ingevoerd nummer 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const checkManualNumber = () => {
-    if (manualInput.length === 4) {
-      setDetectedNumber(manualInput);
-      const isValid = duckNumbers.includes(manualInput);
-      setIsValidNumber(isValid);
-      
-      if (onNumberDetected) {
-        onNumberDetected(manualInput, isValid);
-      }
-    } else {
-      setDetectedNumber('');
-      setIsValidNumber(null);
-    }
   };
 
   // Voeg cijfer toe aan handmatige invoer
