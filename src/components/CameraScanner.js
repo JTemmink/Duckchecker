@@ -21,7 +21,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const [showDebug, setShowDebug] = useState(false);
   const [debugImage, setDebugImage] = useState(null);
   const [useImageProcessing, setUseImageProcessing] = useState(true);
-  const [ocrQuality, setOcrQuality] = useState('balanced');
+  const [ocrQuality, setOcrQuality] = useState('accurate');
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -81,11 +81,15 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
           tessedit_pageseg_mode: '6', // Blok tekst (nauwkeuriger voor getallen)
           tessedit_ocr_engine_mode: '2', // LSTM (nauwkeuriger)
           lstm_choice_mode: '2', // Meerdere opties evalueren
-          lstm_choice_iterations: '10', // Meer iteraties voor LSTM
+          lstm_choice_iterations: '15', // Verhoogd van 10 naar 15 voor meer iteraties
           textord_really_old_xheight: '0', // Moderne teksthoogte berekening
           textord_force_make_prop_words: '0',
           tessedit_do_invert: '0',
-          tessedit_good_quality_rating: '0.95',
+          tessedit_good_quality_rating: '0.98', // Verhoogd van 0.95 naar 0.98
+          classify_min_slope: '0.414',  // Nauwkeurigere tekstherkenning
+          classify_max_slope: '0.414',  // Nauwkeurigere tekstherkenning
+          textord_min_xheight: '8',     // Minimum teksthoogte voor herkenning
+          edges_max_children_per_outline: '40', // Meer details in herkenning
         };
         break;
         
