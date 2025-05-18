@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState, useEffect, useCallback } from 'react';
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { createWorker } from 'tesseract.js';
 
 export default function CameraScanner({ duckNumbers, onNumberDetected }) {
@@ -44,7 +44,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         tessedit_ocr_engine_mode: '2', // LSTM-engine
         user_patterns_file: '11111,2222,3333,4444,55555', // Patroonherkenning voor cijferreeksen
         textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
-        textord_min_linesize: '2.5' // Minimale lijndikte
+        textord_min_linesize: '2.5', // Minimale lijndikte
+        classify_bln_numeric_mode: '1', // Speciaal voor numerieke tekst
+        preserve_interword_spaces: '0', // Geen spaties behouden tussen cijfers
+        tessedit_do_invert: '0', // Geen inversie
+        segment_nonalphabetic_script: '1', // Betere segmentatie voor cijfers
       });
     };
 
@@ -103,25 +107,39 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     if (video && canvas) {
       const context = canvas.getContext('2d');
       
-      // Bereken de positie van het scan-kader in het midden van de video
+      // BELANGRIJK: Bereken de juiste coördinaten voor het scanframe, 
+      // ongeacht het zoomniveau!
+      
+      // 1. Bepaal de werkelijke afmetingen van het videoframe
       const videoWidth = video.videoWidth;
       const videoHeight = video.videoHeight;
+      
+      // 2. Bereken de zichtbare afmetingen na toepassing van de zoom
+      // Bedenk dat bij inzoomen een kleinere deel van de werkelijke video zichtbaar is
+      const visibleWidth = videoWidth / zoomLevel;
+      const visibleHeight = videoHeight / zoomLevel;
+      
+      // 3. Bereken de coördinaten voor het uitsnijden zodat we het midden blijven scannen
+      // Door het verschil tussen originele en zichtbare afmetingen te halveren, blijven we in het midden
+      const centerOffsetX = (videoWidth - visibleWidth) / 2;
+      const centerOffsetY = (videoHeight - visibleHeight) / 2;
+      
+      // 4. Bereken nu het scanframe binnen het zichtbare deel
+      const frameX = centerOffsetX + (visibleWidth - scanFrame.width) / 2;
+      const frameY = centerOffsetY + (visibleHeight - scanFrame.height) / 2;
       
       // Pas canvas grootte aan voor optimale OCR (niet te klein)
       canvas.width = scanFrame.width;
       canvas.height = scanFrame.height;
       
-      // Bereken de coördinaten voor het uitsnijden van het beeld
-      const frameX = (videoWidth - scanFrame.width) / 2;
-      const frameY = (videoHeight - scanFrame.height) / 2;
-      
-      // Trek alleen het gedeelte binnen het kader op de canvas
+      // Trek alleen het gedeelte binnen het kader op de canvas,
+      // gecorrigeerd voor zoomniveau
       context.drawImage(
-        video,                 // bron
-        frameX, frameY,        // beginpunt uitsnede in bronafbeelding
-        scanFrame.width, scanFrame.height,  // grootte uitsnede
-        0, 0,                  // beginpunt op canvas
-        scanFrame.width, scanFrame.height   // grootte op canvas
+        video,                  // bron
+        frameX, frameY,         // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
+        scanFrame.width, scanFrame.height,   // grootte uitsnede
+        0, 0,                   // beginpunt op canvas
+        scanFrame.width, scanFrame.height    // grootte op canvas
       );
       
       try {
@@ -147,11 +165,14 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         }
         
         // TESSERACT PARAMETERS AANPASSEN
-        // Meer focus op tekst met hoger contrast
+        // Geoptimaliseerde parameters voor cijferherkenning
         await workerRef.current.setParameters({
           tessedit_char_whitelist: '0123456789',
-          tessedit_pageseg_mode: '6', // Behandel als blok text
-          preserve_interword_spaces: '0'
+          tessedit_pageseg_mode: '7', // Behandel als één regel tekst
+          preserve_interword_spaces: '0', // Geen spaties tussen cijfers
+          classify_bln_numeric_mode: '1', // Speciaal voor numerieke tekst
+          textord_heavy_nr: '1', // Verwijder noise op basis van lijndikte
+          textord_min_linesize: '2.5', // Minimale lijndikte
         });
         
         const { data } = await workerRef.current.recognize(
@@ -262,7 +283,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel]);
 
   // Stop automatisch scannen met useCallback
   const stopAutoScan = useCallback(() => {
@@ -288,7 +309,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         setScanFeedback('Camera scant nu...');
         captureImage();
       }
-    }, 1000); // Scan elke seconde
+    }, 2000); // Scan elke seconde
   }, [stopAutoScan, isProcessing, isStreaming, isPaused, captureImage]);
 
   // Start de camera
@@ -393,6 +414,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     setDetectedNumber(newInput);
     const isValid = validateNumber(newInput, duckNumbers);
     setIsValidNumber(isValid);
+    
+    // Rapporteer ook aan de parent component
+    if (onNumberDetected) {
+      onNumberDetected(newInput, isValid);
+    }
   };
 
   // Verwijder laatste cijfer van handmatige invoer
@@ -424,8 +450,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     };
   }, [isStreaming, isManualMode, startAutoScan, stopAutoScan]);
 
-  // Render het numeric keypad voor handmatige invoer
-  const renderKeypad = () => {
+  // Render het numeric keypad voor handmatige invoer - gebruik useMemo voor betere prestaties
+  const renderKeypad = useMemo(() => {
     return (
       <div className="flex flex-col items-center w-full max-w-xs mx-auto">
         <div className="w-full p-4 mb-4 text-center bg-gray-100 rounded-lg">
@@ -476,7 +502,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         </button>
       </div>
     );
-  };
+  }, [manualInput, addDigit, clearInput, removeLastDigit, switchToCameraMode]);
 
   // Bereken achtergrondkleur voor camera container
   const getCameraContainerClass = () => {
@@ -551,17 +577,30 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
           {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
               <div 
-                className="border-4 border-blue-500 rounded-md bg-transparent"
+                className="border-4 rounded-md bg-transparent relative"
                 style={{
                   width: `${scanFrame.width}px`,
                   height: `${scanFrame.height}px`,
-                  boxShadow: '0 0 0 2000px rgba(0, 0, 0, 0.3)'
+                  boxShadow: '0 0 0 2000px rgba(0, 0, 0, 0.3)',
+                  borderColor: isProcessing ? 'rgba(239, 68, 68, 0.8)' : 'rgba(59, 130, 246, 0.8)'
                 }}
               >
+                {/* Hoekmarkeringen voor betere visuele indicatie van scangebied */}
+                <div className="absolute top-0 left-0 w-3 h-3 border-t-4 border-l-4 border-white"></div>
+                <div className="absolute top-0 right-0 w-3 h-3 border-t-4 border-r-4 border-white"></div>
+                <div className="absolute bottom-0 left-0 w-3 h-3 border-b-4 border-l-4 border-white"></div>
+                <div className="absolute bottom-0 right-0 w-3 h-3 border-b-4 border-r-4 border-white"></div>
+                
                 <div className="w-full h-full flex items-center justify-center">
                   <span className="text-white drop-shadow-lg text-sm text-center px-2">
-                    Plaats het nummer in dit kader <br/> 
-                    <small>Houd het beeld stabiel</small>
+                    {isProcessing ? (
+                      <>Scanning<span className="animate-pulse">...</span></>
+                    ) : (
+                      <>
+                        Plaats het nummer in dit kader <br/> 
+                        <small>Houd het beeld stabiel</small>
+                      </>
+                    )}
                   </span>
                 </div>
               </div>
@@ -600,16 +639,42 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
               <span className="text-xs font-semibold">{Math.round(zoomLevel * 100)}%</span>
               <span className="text-xs">Inzoomen</span>
             </div>
-            <input
-              type="range"
-              min="1.0"
-              max="3.0"
-              step="0.1"
-              value={zoomLevel}
-              onChange={handleZoomChange}
-              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
-              aria-label="Zoom niveau"
-            />
+            <div className="flex items-center">
+              <input
+                type="range"
+                min="1.0"
+                max="3.0"
+                step="0.1"
+                value={zoomLevel}
+                onChange={handleZoomChange}
+                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                aria-label="Zoom niveau"
+              />
+            </div>
+            {/* Visuele indicator voor optimaal zoomniveau */}
+            <div className="w-full h-4 mt-1 relative">
+              <div className="absolute top-0 left-1/4 right-1/4 h-1 bg-gray-300 rounded-full"></div>
+              <div 
+                className="absolute top-0 h-1 bg-green-500 rounded-full transition-all duration-300"
+                style={{
+                  left: '40%',
+                  right: '40%',
+                  opacity: zoomLevel >= 1.8 && zoomLevel <= 2.2 ? 1 : 0.3
+                }}
+              ></div>
+              <div 
+                className="absolute top-0 left-1/2 w-4 h-4 bg-white border-2 rounded-full -ml-2 -mt-1.5 transition-all duration-300"
+                style={{
+                  borderColor: zoomLevel >= 1.8 && zoomLevel <= 2.2 ? '#10b981' : '#d1d5db',
+                  transform: `translateX(${(zoomLevel - 1) * 100}px)`
+                }}
+              ></div>
+              <div className="flex justify-between px-1 mt-1.5 text-[10px] text-gray-500">
+                <span>1.0x</span>
+                <span className="text-green-600 font-semibold">1.8-2.2x (optimaal)</span>
+                <span>3.0x</span>
+              </div>
+            </div>
           </div>
         )}
         
