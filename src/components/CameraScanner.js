@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { createWorker } from 'tesseract.js';
 
 export default function CameraScanner({ duckNumbers, onNumberDetected }) {
@@ -17,6 +17,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const [isPaused, setIsPaused] = useState(false);
   
   // Instellingen voor het scan-kader
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [scanFrame, setScanFrame] = useState({
     width: 280,  // Breedte van het kader in pixels
     height: 100, // Hoogte van het kader in pixels
@@ -46,129 +47,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     };
   }, []);
 
-  // Start automatisch scannen
-  const startAutoScan = () => {
-    // Stop eventueel bestaande interval
-    stopAutoScan();
-    
-    // Geef feedback dat scannen is gestart
-    setScanFeedback('Automatisch scannen gestart...');
-    
-    // Start nieuwe interval
-    intervalRef.current = setInterval(() => {
-      if (!isProcessing && isStreaming && !isPaused) {
-        // Update tekst om te laten zien dat we scannen
-        setScanFeedback('Camera scant nu...');
-        captureImage();
-      }
-    }, 1000); // Scan elke seconde
-  };
-
-  // Stop automatisch scannen
-  const stopAutoScan = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setScanFeedback('');
-    }
-  };
-
-  // Start de camera
-  const startCamera = async () => {
-    try {
-      setScanFeedback('Camera wordt gestart...');
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: { ideal: 'environment' } }
-      });
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setIsStreaming(true);
-        setIsManualMode(false);
-        setScanFeedback('Camera draait, scannen start...');
-      }
-    } catch (err) {
-      console.error('Fout bij het starten van de camera:', err);
-      setScanFeedback('Fout bij het starten van de camera!');
-    }
-  };
-
-  // Stop de camera
-  const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-      setIsStreaming(false);
-      stopAutoScan();
-    }
-  };
-
-  // Schakel naar handmatige invoermodus
-  const switchToManualMode = () => {
-    stopCamera();
-    setIsManualMode(true);
-    setManualInput('');
-    setDetectedNumber('');
-    setIsValidNumber(null);
-    setScanFeedback('');
-  };
-
-  // Schakel terug naar camera-modus
-  const switchToCameraMode = () => {
-    setIsManualMode(false);
-    startCamera();
-  };
-
-  // Controleer handmatig ingevoerd nummer
-  const checkManualNumber = () => {
-    if (manualInput.length === 4) {
-      setDetectedNumber(manualInput);
-      const isValid = duckNumbers.includes(manualInput);
-      setIsValidNumber(isValid);
-      
-      if (onNumberDetected) {
-        onNumberDetected(manualInput, isValid);
-      }
-    } else {
-      setDetectedNumber('');
-      setIsValidNumber(null);
-    }
-  };
-
-  // Voeg cijfer toe aan handmatige invoer
-  const addDigit = (digit) => {
-    if (manualInput.length < 4) {
-      const newInput = manualInput + digit;
-      setManualInput(newInput);
-      
-      if (newInput.length === 4) {
-        // Automatisch controleren als het 4 cijfers heeft
-        setTimeout(() => {
-          setDetectedNumber(newInput);
-          const isValid = duckNumbers.includes(newInput);
-          setIsValidNumber(isValid);
-        }, 300);
-      }
-    }
-  };
-
-  // Verwijder laatste cijfer van handmatige invoer
-  const removeLastDigit = () => {
-    if (manualInput.length > 0) {
-      setManualInput(manualInput.slice(0, -1));
-      setDetectedNumber('');
-      setIsValidNumber(null);
-    }
-  };
-
-  // Wis handmatige invoer
-  const clearInput = () => {
-    setManualInput('');
-    setDetectedNumber('');
-    setIsValidNumber(null);
-  };
-
   // Verwerk een afbeelding voordat OCR wordt uitgevoerd
   const preprocessImage = (canvas) => {
     const ctx = canvas.getContext('2d');
@@ -197,6 +75,33 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     ctx.putImageData(imageData, 0, 0);
     return canvas;
   };
+
+  // Stop automatisch scannen met useCallback
+  const stopAutoScan = useCallback(() => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+      setScanFeedback('');
+    }
+  }, []);
+
+  // Start automatisch scannen met useCallback
+  const startAutoScan = useCallback(() => {
+    // Stop eventueel bestaande interval
+    stopAutoScan();
+    
+    // Geef feedback dat scannen is gestart
+    setScanFeedback('Automatisch scannen gestart...');
+    
+    // Start nieuwe interval
+    intervalRef.current = setInterval(() => {
+      if (!isProcessing && isStreaming && !isPaused) {
+        // Update tekst om te laten zien dat we scannen
+        setScanFeedback('Camera scant nu...');
+        captureImage();
+      }
+    }, 1000); // Scan elke seconde
+  }, [stopAutoScan, isProcessing, isStreaming, isPaused, setScanFeedback]);
 
   // Neem een snapshot en verwerk het met OCR
   const captureImage = async () => {
@@ -316,6 +221,103 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     }
   };
 
+  // Start de camera
+  const startCamera = async () => {
+    try {
+      setScanFeedback('Camera wordt gestart...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: { ideal: 'environment' } }
+      });
+      
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        setIsStreaming(true);
+        setIsManualMode(false);
+        setScanFeedback('Camera draait, scannen start...');
+      }
+    } catch (err) {
+      console.error('Fout bij het starten van de camera:', err);
+      setScanFeedback('Fout bij het starten van de camera!');
+    }
+  };
+
+  // Stop de camera
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const tracks = videoRef.current.srcObject.getTracks();
+      tracks.forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+      setIsStreaming(false);
+      stopAutoScan();
+    }
+  };
+
+  // Schakel naar handmatige invoermodus
+  const switchToManualMode = () => {
+    stopCamera();
+    setIsManualMode(true);
+    setManualInput('');
+    setDetectedNumber('');
+    setIsValidNumber(null);
+    setScanFeedback('');
+  };
+
+  // Schakel terug naar camera-modus
+  const switchToCameraMode = () => {
+    setIsManualMode(false);
+    startCamera();
+  };
+
+  // Controleer handmatig ingevoerd nummer 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const checkManualNumber = () => {
+    if (manualInput.length === 4) {
+      setDetectedNumber(manualInput);
+      const isValid = duckNumbers.includes(manualInput);
+      setIsValidNumber(isValid);
+      
+      if (onNumberDetected) {
+        onNumberDetected(manualInput, isValid);
+      }
+    } else {
+      setDetectedNumber('');
+      setIsValidNumber(null);
+    }
+  };
+
+  // Voeg cijfer toe aan handmatige invoer
+  const addDigit = (digit) => {
+    if (manualInput.length < 4) {
+      const newInput = manualInput + digit;
+      setManualInput(newInput);
+      
+      if (newInput.length === 4) {
+        // Automatisch controleren als het 4 cijfers heeft
+        setTimeout(() => {
+          setDetectedNumber(newInput);
+          const isValid = duckNumbers.includes(newInput);
+          setIsValidNumber(isValid);
+        }, 300);
+      }
+    }
+  };
+
+  // Verwijder laatste cijfer van handmatige invoer
+  const removeLastDigit = () => {
+    if (manualInput.length > 0) {
+      setManualInput(manualInput.slice(0, -1));
+      setDetectedNumber('');
+      setIsValidNumber(null);
+    }
+  };
+
+  // Wis handmatige invoer
+  const clearInput = () => {
+    setManualInput('');
+    setDetectedNumber('');
+    setIsValidNumber(null);
+  };
+
   // Start automatisch scannen wanneer de camera start
   useEffect(() => {
     if (isStreaming && !isManualMode) {
@@ -327,7 +329,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     return () => {
       stopAutoScan();
     };
-  }, [isStreaming, isManualMode]);
+  }, [isStreaming, isManualMode, startAutoScan, stopAutoScan]);
 
   // Render het numeric keypad voor handmatige invoer
   const renderKeypad = () => {

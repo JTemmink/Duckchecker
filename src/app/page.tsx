@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import type { SetStateAction } from 'react';
-// @ts-ignore
+// Verwijderd: SetStateAction import die niet wordt gebruikt
+// @ts-expect-error
 import CameraScanner from '../components/CameraScanner';
-// @ts-ignore
+// @ts-expect-error
 import { loadDuckNumbers } from '../utils/loadCsv';
 
 export default function Home() {
