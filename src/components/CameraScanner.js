@@ -18,6 +18,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugImage, setDebugImage] = useState(null);
+  const [useImageProcessing, setUseImageProcessing] = useState(true);
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -55,61 +58,34 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
 
   // Verwerk een afbeelding voordat OCR wordt uitgevoerd
   const preprocessImage = (canvas) => {
+    if (!useImageProcessing) return canvas; // Skip als beeldverwerking uit staat
+    
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
     
-    // Eerste stap: omzetten naar grijswaarden
+    // EENVOUDIGE BEELDVERWERKING - terug naar basisaanpak
+    // Contrast verhogen en naar zwart-wit converteren
+    const factor = 2.5; // Contrast verhogen 
+    const intercept = 128 * (1 - factor);
+    
     for (let i = 0; i < data.length; i += 4) {
+      // Grayscale conversie - standaard formule
       const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      data[i] = data[i + 1] = data[i + 2] = gray;
+      
+      // Contrast aanpassen
+      const adjusted = factor * gray + intercept;
+      
+      // Binaire conversie (zwart-wit) met vaste drempelwaarde
+      const threshold = 128;
+      const result = adjusted > threshold ? 255 : 0;
+      
+      // Alle kleurkanalen gelijk maken
+      data[i] = data[i + 1] = data[i + 2] = result;
     }
     
-    // Tweede stap: contrast verhogen (stretch histogram)
-    let min = 255;
-    let max = 0;
-    
-    // Vind min en max waarden
-    for (let i = 0; i < data.length; i += 4) {
-      if (data[i] < min) min = data[i];
-      if (data[i] > max) max = data[i];
-    }
-    
-    // Als er voldoende contrast is
-    if (max > min) {
-      const range = max - min;
-      for (let i = 0; i < data.length; i += 4) {
-        data[i] = data[i + 1] = data[i + 2] = Math.round(((data[i] - min) / range) * 255);
-      }
-    }
-    
-    // Derde stap: binaire drempelwaarde (verhoogt contrast voor cijfers)
-    const threshold = 125;
-    for (let i = 0; i < data.length; i += 4) {
-      const val = data[i] > threshold ? 255 : 0;
-      data[i] = data[i + 1] = data[i + 2] = val;
-    }
-    
-    // Plaats de verwerkte afbeelding terug op het canvas
+    // Update afbeelding
     ctx.putImageData(imageData, 0, 0);
-    
-    // Extra stap: rand toevoegen rondom het beeld (helpt Tesseract)
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = canvas.width + 20;
-    tempCanvas.height = canvas.height + 20;
-    const tempCtx = tempCanvas.getContext('2d');
-    
-    // Witte achtergrond maken
-    tempCtx.fillStyle = '#FFFFFF';
-    tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-    
-    // Plaats het originele canvas met een marge
-    tempCtx.drawImage(canvas, 10, 10);
-    
-    // Kopieer terug naar het originele canvas (vergroot het eerst)
-    canvas.width = tempCanvas.width;
-    canvas.height = tempCanvas.height;
-    ctx.drawImage(tempCanvas, 0, 0);
     
     return canvas;
   };
@@ -131,7 +107,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       const videoWidth = video.videoWidth;
       const videoHeight = video.videoHeight;
       
-      // Stel de canvas afmetingen in op de grootte van het scan-kader
+      // Pas canvas grootte aan voor optimale OCR (niet te klein)
       canvas.width = scanFrame.width;
       canvas.height = scanFrame.height;
       
@@ -149,15 +125,38 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       );
       
       try {
+        // Maak een kopie van originele afbeelding voor debug
+        const originalImageData = canvas.toDataURL('image/png');
+        
+        // Maak een kopie voor debug weergave (voor afbeelding is verwerkt)
+        if (showDebug) {
+          setDebugImage(originalImageData);
+        }
+        
         // Pas beeldverbetering toe
         preprocessImage(canvas);
         
         // Maak een kopie van het geoptimaliseerde beeld
-        const imageData = canvas.toDataURL('image/png');
+        const processedImageData = canvas.toDataURL('image/png');
         
         console.log("Verwerken van geoptimaliseerde afbeelding...");
         
-        const { data } = await workerRef.current.recognize(imageData);
+        // DEBUG: Toon beelden in de console (als ontwikkelaar)
+        if (showDebug) {
+          setDebugImage(useImageProcessing ? processedImageData : originalImageData);
+        }
+        
+        // TESSERACT PARAMETERS AANPASSEN
+        // Meer focus op tekst met hoger contrast
+        await workerRef.current.setParameters({
+          tessedit_char_whitelist: '0123456789',
+          tessedit_pageseg_mode: '6', // Behandel als blok text
+          preserve_interword_spaces: '0'
+        });
+        
+        const { data } = await workerRef.current.recognize(
+          useImageProcessing ? processedImageData : originalImageData
+        );
         const text = data.text.trim();
         
         // Debug info
@@ -263,7 +262,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing]);
 
   // Stop automatisch scannen met useCallback
   const stopAutoScan = useCallback(() => {
@@ -519,6 +518,17 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
+          {/* Debug weergave als het is ingeschakeld */}
+          {showDebug && debugImage && (
+            <div className="absolute top-2 right-2 p-1 bg-white rounded shadow-md" style={{ width: '120px', height: '60px' }}>
+              <img 
+                src={debugImage} 
+                alt="Debug" 
+                className="w-full h-full object-contain"
+              />
+            </div>
+          )}
+          
           {/* Scan-kader overlay met duidelijkere instructies */}
           {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
@@ -582,6 +592,46 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
               className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
               aria-label="Zoom niveau"
             />
+          </div>
+        )}
+        
+        {/* Geavanceerde opties (voor problemen oplossen) */}
+        {isStreaming && (
+          <div className="w-full max-w-md mb-4 px-3">
+            <details className="bg-gray-100 p-2 rounded-lg text-sm">
+              <summary className="font-medium cursor-pointer">OCR-hulp opties</summary>
+              <div className="mt-2 space-y-2">
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="useImageProcessing"
+                    checked={useImageProcessing}
+                    onChange={() => setUseImageProcessing(!useImageProcessing)}
+                    className="mr-2 h-4 w-4"
+                  />
+                  <label htmlFor="useImageProcessing">
+                    Beeldverwerking {useImageProcessing ? 'AAN' : 'UIT'}
+                  </label>
+                </div>
+                
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="showDebug"
+                    checked={showDebug}
+                    onChange={() => setShowDebug(!showDebug)}
+                    className="mr-2 h-4 w-4"
+                  />
+                  <label htmlFor="showDebug">
+                    Debug weergave {showDebug ? 'AAN' : 'UIT'}
+                  </label>
+                </div>
+                
+                <p className="text-xs text-gray-600 mt-1">
+                  Als de OCR-herkenning niet goed werkt, probeer beeldverwerking in/uit te schakelen
+                </p>
+              </div>
+            </details>
           </div>
         )}
         
