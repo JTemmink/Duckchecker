@@ -240,19 +240,47 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const startCamera = async () => {
     try {
       setScanFeedback('Camera wordt gestart...');
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        video: { facingMode: { ideal: 'environment' } }
-      });
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        setIsStreaming(true);
-        setIsManualMode(false);
-        setScanFeedback('Camera draait, scannen start...');
+      // Probeer eerst de achtercamera (environment)
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { 
+            facingMode: { exact: 'environment' },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          setIsStreaming(true);
+          setScanFeedback('Achtercamera actief, scannen start...');
+        }
+      } catch (envError) {
+        console.log('Kan achtercamera niet gebruiken, probeer andere camera:', envError);
+        
+        // Als achtercamera mislukt, probeer dan elke beschikbare camera
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: true 
+          });
+          
+          if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            setIsStreaming(true);
+            setScanFeedback('Camera actief, scannen start...');
+          }
+        } catch (anyError) {
+          throw new Error(`Geen camera's beschikbaar: ${anyError.message}`);
+        }
       }
+      
+      setIsManualMode(false);
     } catch (err) {
       console.error('Fout bij het starten van de camera:', err);
-      setScanFeedback('Fout bij het starten van de camera!');
+      setScanFeedback(`Cameratoegang mislukt: ${err.message}. Handmatige invoer aanbevolen.`);
+      // Automatisch overschakelen naar handmatige invoer als de camera niet werkt
+      switchToManualMode();
     }
   };
 

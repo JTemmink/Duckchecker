@@ -35,7 +35,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center p-4 sm:p-8">
-      <h1 className="text-3xl font-bold mb-8 text-center">DuckCheck Nummer Scanner</h1>
+      <h1 className="text-3xl font-bold mb-4 text-center">DuckCheck Nummer Scanner</h1>
       
       {isLoading ? (
         <div className="flex flex-col items-center justify-center">
@@ -48,11 +48,20 @@ export default function Home() {
         </div>
       ) : (
         <>
+          <div className="mb-6 text-center text-sm text-gray-700 max-w-md">
+            <p className="mb-2">Deze app kan op twee manieren nummers controleren:</p>
+            <ul className="list-disc text-left pl-6 mb-4">
+              <li>Via de camera (vereist cameratoegang)</li>
+              <li>Via handmatige invoer (gebruik de knop "Handmatig invoeren")</li>
+            </ul>
+            <p>Als de camera niet werkt, gebruik dan de handmatige invoermodus.</p>
+          </div>
+
           <CameraScanner duckNumbers={duckNumbers} onNumberDetected={handleNumberDetected} />
           
           <div className="mt-8 text-center text-sm text-gray-500">
-            <p>Deze app gebruikt je camera om nummers te scannen en te controleren of ze in de database voorkomen.</p>
-            <p>Richt je camera op een duidelijk zichtbaar nummer voor het beste resultaat.</p>
+            <p className="mb-2">Deze app controleert nummers tegen de database.</p>
+            <p>Bij camera-scannen wordt een nummer twee keer gecontroleerd voor nauwkeurigheid.</p>
           </div>
         </>
       )}
