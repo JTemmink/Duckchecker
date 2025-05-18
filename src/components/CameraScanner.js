@@ -15,6 +15,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const workerRef = useRef(null);
   const intervalRef = useRef(null);
   const [isPaused, setIsPaused] = useState(false);
+  const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
+  const [verificationInProgress, setVerificationInProgress] = useState(false);
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -80,7 +82,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     if (!isStreaming || isProcessing || !workerRef.current) return;
     
     setIsProcessing(true);
-    setScanFeedback('Verwerken...');
+    setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
     
     const video = videoRef.current;
     const canvas = canvasRef.current;
@@ -131,57 +133,71 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         console.log("Gevonden getallen:", numbersFound);
         
         if (numbersFound && numbersFound.length > 0) {
-          // Filter op getallen van 4 cijfers
-          const fourDigitNumbers = numbersFound.filter(num => num.length === 4);
-          console.log("Gevonden 4-cijferige nummers:", fourDigitNumbers);
+          // We verwijderen de beperking op 4 cijfers en nemen gewoon het eerste nummer
+          const number = numbersFound[0];
           
-          if (fourDigitNumbers.length > 0) {
-            // Vind het nummer met hoogste confidence (eerste als prioriteit)
-            const number = fourDigitNumbers[0];
-            setDetectedNumber(number);
-            
-            // Controleer of het nummer in de lijst voorkomt
-            const isValid = duckNumbers.includes(number);
-            setIsValidNumber(isValid);
-            
-            setScanFeedback(`Nummer gevonden: ${number}`);
-            
-            if (onNumberDetected) {
-              onNumberDetected(number, isValid);
-            }
-            
-            // Pauzeer het scannen voor 2 seconden
-            setIsPaused(true);
-            setTimeout(() => {
-              setIsPaused(false);
-            }, 2000);
-          } else {
-            // Zoek naar nummers die misschien 4 cijfers kunnen zijn maar niet correct gelezen zijn
-            const possibleFourDigits = numbersFound.filter(num => {
-              // Nummer ligt in de buurt van 4 cijfers (3-5)
-              return num.length >= 3 && num.length <= 5;
-            });
-            
-            if (possibleFourDigits.length > 0) {
-              setScanFeedback('Mogelijk nummer gevonden, probeer opnieuw...');
+          // Als we bezig zijn met verificatie
+          if (verificationInProgress && lastDetectedNumber) {
+            if (number === lastDetectedNumber) {
+              // Nummer is geverifieerd, verwerk het nu
+              setDetectedNumber(number);
+              
+              // Controleer of het nummer in de lijst voorkomt
+              const isValid = duckNumbers.includes(number);
+              setIsValidNumber(isValid);
+              
+              setScanFeedback(`Nummer geverifieerd: ${number}`);
+              
+              if (onNumberDetected) {
+                onNumberDetected(number, isValid);
+              }
+              
+              // Reset verificatie status
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
+              
+              // Pauzeer het scannen voor 2 seconden
+              setIsPaused(true);
+              setTimeout(() => {
+                setIsPaused(false);
+              }, 2000);
             } else {
-              // Toon niets als er geen 4-cijferig getal is gedetecteerd
-              setDetectedNumber('');
-              setIsValidNumber(null);
-              setScanFeedback('Geen 4-cijferig nummer gevonden. Scannen gaat door...');
+              // Getallen komen niet overeen, reset en probeer opnieuw
+              setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
             }
+          } else {
+            // Start verificatieproces
+            setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
+            setLastDetectedNumber(number);
+            setVerificationInProgress(true);
+            
+            // Onmiddellijk nog een keer scannen voor verificatie
+            setTimeout(() => {
+              setIsProcessing(false); // Reset processing flag voor de tweede scan
+              captureImage(); // Roep zichzelf opnieuw aan voor verificatie
+            }, 300); // Kleine vertraging om een andere frame te krijgen
           }
         } else {
           // Geen getallen gedetecteerd
-          setDetectedNumber('');
-          setIsValidNumber(null);
-          setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+          if (verificationInProgress) {
+            setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
+            setVerificationInProgress(false);
+            setLastDetectedNumber(null);
+          } else {
+            setDetectedNumber('');
+            setIsValidNumber(null);
+            setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+          }
         }
       } catch (err) {
         console.error('OCR fout:', err);
         // Reset alle states bij een fout
         setDetectedNumber('');
         setIsValidNumber(null);
+        setVerificationInProgress(false);
+        setLastDetectedNumber(null);
         setScanFeedback('Fout bij scannen. Probeer opnieuw...');
       } finally {
         setIsProcessing(false);
@@ -191,7 +207,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber]);
 
   // Stop automatisch scannen met useCallback
   const stopAutoScan = useCallback(() => {
@@ -269,19 +285,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
 
   // Voeg cijfer toe aan handmatige invoer
   const addDigit = (digit) => {
-    if (manualInput.length < 4) {
-      const newInput = manualInput + digit;
-      setManualInput(newInput);
-      
-      if (newInput.length === 4) {
-        // Automatisch controleren als het 4 cijfers heeft
-        setTimeout(() => {
-          setDetectedNumber(newInput);
-          const isValid = duckNumbers.includes(newInput);
-          setIsValidNumber(isValid);
-        }, 300);
-      }
-    }
+    const newInput = manualInput + digit;
+    setManualInput(newInput);
+    
+    // Controleer het nummer direct na elke invoer
+    setDetectedNumber(newInput);
+    const isValid = duckNumbers.includes(newInput);
+    setIsValidNumber(isValid);
   };
 
   // Verwijder laatste cijfer van handmatige invoer
@@ -323,7 +333,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
             value={manualInput}
             readOnly
             className="w-full text-2xl text-center font-mono bg-transparent outline-none"
-            placeholder="Voer 4 cijfers in"
+            placeholder="Voer een nummer in"
           />
         </div>
         
