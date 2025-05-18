@@ -753,7 +753,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         renderCamera()
       ) : (
         // Handmatige invoer modus
-        renderKeypad()
+        renderKeypad
       )}
       
       {/* Uitgebreide informatie onder camerabeeld */}
