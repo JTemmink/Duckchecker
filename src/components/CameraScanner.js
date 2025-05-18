@@ -501,9 +501,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
 
   // Render het numeric keypad voor handmatige invoer - gebruik useMemo voor betere prestaties
   const renderKeypad = useMemo(() => {
+    // Bepaal de juiste achtergrondkleur voor het invoerveld op basis van validatie
+    let inputBgClass = "bg-gray-100"; // Standaard grijze achtergrond
+    
+    // Als er een invoer is en validatie heeft plaatsgevonden
+    if (manualInput && isValidNumber !== null) {
+      inputBgClass = isValidNumber ? "bg-green-100" : "bg-red-100";
+    }
+    
     return (
       <div className="flex flex-col items-center w-full max-w-xs mx-auto">
-        <div className="w-full p-4 mb-4 text-center bg-gray-100 rounded-lg">
+        <div className={`w-full p-4 mb-4 text-center ${inputBgClass} rounded-lg transition-colors duration-300 border`} 
+             style={{borderColor: isValidNumber === true ? '#10b981' : isValidNumber === false ? '#ef4444' : '#e5e7eb'}}>
           <input
             type="text"
             value={manualInput}
@@ -551,7 +560,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
         </button>
       </div>
     );
-  }, [manualInput, addDigit, clearInput, removeLastDigit, switchToCameraMode]);
+  }, [manualInput, isValidNumber, addDigit, clearInput, removeLastDigit, switchToCameraMode]);
 
   // Bereken achtergrondkleur voor camera container
   const getCameraContainerClass = () => {
