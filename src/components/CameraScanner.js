@@ -17,6 +17,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const [isPaused, setIsPaused] = useState(false);
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
+  const [zoomLevel, setZoomLevel] = useState(1.0);
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -471,6 +472,22 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
     }
   };
 
+  // Wijzig het zoomniveau
+  const handleZoomChange = (e) => {
+    const newZoom = parseFloat(e.target.value);
+    setZoomLevel(newZoom);
+    
+    // Update feedback om te laten zien wat er gebeurt
+    setScanFeedback(`Zoom niveau: ${Math.round(newZoom * 100)}%`);
+    
+    // Reset na korte tijd
+    setTimeout(() => {
+      if (isStreaming) {
+        setScanFeedback('Camera actief, scannen start...');
+      }
+    }, 1000);
+  };
+
   // Render de UI voor camera-modus met scan-kader
   const renderCamera = () => {
     return (
@@ -482,8 +499,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
           </div>
         )}
         
-        <div className={`relative mb-4 rounded-lg overflow-hidden ${getCameraContainerClass()}`}>
-          {/* Camera video */}
+        <div className={`relative mb-2 rounded-lg overflow-hidden ${getCameraContainerClass()}`}>
+          {/* Camera video met zoom */}
           <video
             ref={videoRef}
             autoPlay
@@ -491,10 +508,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
             className="w-full max-w-md h-auto"
             onPlay={() => setIsStreaming(true)}
             style={{ 
-              transform: 'scaleX(1)', // Schaal niet spiegelen op mobiel (betere OCR)
-              maxHeight: '60vh',       // Beperk hoogte
-              objectFit: 'cover',      // Vul het kader
-              backgroundColor: '#000'  // Zwarte achtergrond
+              transform: `scaleX(1) scale(${zoomLevel})`, // Zoom level toepassen
+              transformOrigin: 'center center',           // Zoom vanuit het midden
+              maxHeight: '60vh',                          // Beperk hoogte
+              objectFit: 'cover',                         // Vul het kader
+              backgroundColor: '#000'                     // Zwarte achtergrond
             }}
           />
           
@@ -545,6 +563,27 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
             </div>
           )}
         </div>
+        
+        {/* Zoom schuifbalk */}
+        {isStreaming && (
+          <div className="w-full max-w-md mb-4 px-3">
+            <div className="flex items-center justify-between mb-1">
+              <span className="text-xs">Uitzoomen</span>
+              <span className="text-xs font-semibold">{Math.round(zoomLevel * 100)}%</span>
+              <span className="text-xs">Inzoomen</span>
+            </div>
+            <input
+              type="range"
+              min="1.0"
+              max="3.0"
+              step="0.1"
+              value={zoomLevel}
+              onChange={handleZoomChange}
+              className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
+              aria-label="Zoom niveau"
+            />
+          </div>
+        )}
         
         <div className="flex space-x-4 mb-6">
           {!isStreaming ? (
