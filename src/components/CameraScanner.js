@@ -16,7 +16,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
   const intervalRef = useRef(null);
   const [isPaused, setIsPaused] = useState(false);
   
-  // Instellingen voor het scan-kader (wordt gebruikt in de UI en captureImage)
+  // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
     width: 280,  // Breedte van het kader in pixels
     height: 100, // Hoogte van het kader in pixels
@@ -191,7 +191,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       setIsProcessing(false);
       setScanFeedback('Camera niet beschikbaar');
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, scanFrame.height, scanFrame.width]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected]);
 
   // Stop automatisch scannen met useCallback
   const stopAutoScan = useCallback(() => {
