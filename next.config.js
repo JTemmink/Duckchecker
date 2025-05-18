@@ -7,10 +7,6 @@ const nextConfig = {
   typescript: {
     // TypeScript controles overslaan tijdens het bouwen
     ignoreBuildErrors: true,
-  },
-  // Vercel build optimalisaties uitschakelen voor beter resultaat
-  experimental: {
-    forceSwcTransforms: true,
   }
 }
 
