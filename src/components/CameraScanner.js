@@ -454,20 +454,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
     console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
     
-    // Haal de laatste 4 cijfers uit elk geldig "Duck-XXXXXX" nummer
-    const extractedValidNumbers = validNumbers.map(duckNum => {
-      // We verwachten formaat "Duck-XXXXXX" en willen de laatste 4 cijfers
-      const match = duckNum.match(/Duck-(\d{6})$/);
-      if (match && match[1]) {
-        return match[1].slice(2); // Neem alleen de laatste 4 cijfers van het 6-cijferige getal
-      }
-      return duckNum; // Fallback voor andere formaten
-    });
-    
-    console.log(`Enkele geëxtraheerde geldige nummers: ${extractedValidNumbers.slice(0,5)}`);
-    
     // Check of het nummer in de lijst voorkomt (string vergelijking)
-    const isValid = extractedValidNumbers.includes(cleanDetected);
+    const isValid = validNumbers.includes(cleanDetected);
     console.log(`In lijst: ${isValid}`);
     
     return isValid;
