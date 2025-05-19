@@ -330,8 +330,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             // Pauzeer het scannen voor 2 seconden
             setIsPaused(true);
+            console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
             setTimeout(() => {
               setIsPaused(false);
+              setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
+              setScanFeedback('Scannen hervat...');
+              console.log("Scannen hervat na pauze");
+              
+              // Na 1 seconde de scan feedback updaten
+              setTimeout(() => {
+                if (isStreaming) {
+                  setScanFeedback('Camera scant nu...');
+                }
+              }, 1000);
             }, 2000);
           } else {
             // Getallen komen niet overeen, reset en probeer opnieuw
@@ -357,10 +368,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
           setVerificationInProgress(false);
           setLastDetectedNumber(null);
+          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
         } else {
           setDetectedNumber('');
           setIsValidNumber(null);
           setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
         }
       }
     } else {
@@ -393,8 +406,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         setScanFeedback('Camera scant nu...');
         captureImage();
         console.log("Nieuwe scan gestart - " + new Date().toLocaleTimeString());
+      } else {
+        // Log de status voor debugdoeleinden
+        console.log(`Scan overgeslagen - Status: isProcessing=${isProcessing}, isStreaming=${isStreaming}, isPaused=${isPaused}`);
       }
-    }, 2000);
+    }, 1000); // Elke seconde scannen in plaats van elke 2 seconden
   }, [stopAutoScan, isProcessing, isStreaming, isPaused, captureImage]);
 
   // Start de camera
@@ -407,23 +423,30 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         mediaStream.getTracks().forEach(track => track.stop());
       }
       
+      // Detecteer of het apparaat een laptop/desktop is (geen mobiel apparaat)
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // Gebruik standaard de frontcamera voor laptops/desktops en achtercamera voor mobiele apparaten
+      let initialFacingMode = isMobileDevice ? cameraFacing : 'user';
+      
       // Probeer gewenste camera te starten
       try {
         const constraints = {
           video: {
-            facingMode: { ideal: cameraFacing },
+            facingMode: { ideal: initialFacingMode },
             width: { ideal: 1280 },
             height: { ideal: 720 }
           }
         };
         
-        console.log(`Probeert camera te starten met facing mode: ${cameraFacing}`);
+        console.log(`Probeert camera te starten met facing mode: ${initialFacingMode}`);
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setIsStreaming(true);
           setMediaStream(stream); // Sla stream op voor latere toegang
+          setCameraFacing(initialFacingMode); // Update de camera-richting state met wat daadwerkelijk gebruikt wordt
           
           // Controleer of de camera een flitser/torch heeft
           const videoTrack = stream.getVideoTracks()[0];
@@ -435,16 +458,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             setHasTorch(hasFlash || false);
             console.log(`Camera heeft flitser: ${hasFlash ? 'JA' : 'NEE'}`);
-            setScanFeedback(`${cameraFacing === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+            setScanFeedback(`${initialFacingMode === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
           } else {
             setHasTorch(false);
           }
         }
       } catch (primaryError) {
-        console.log(`Kan camera met facing mode '${cameraFacing}' niet gebruiken:`, primaryError);
+        console.log(`Kan camera met facing mode '${initialFacingMode}' niet gebruiken:`, primaryError);
         
         // Als de gewenste camera niet werkt, probeer dan de andere
-        const alternateFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+        const alternateFacing = initialFacingMode === 'environment' ? 'user' : 'environment';
         
         try {
           const alternateConstraints = {

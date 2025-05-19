@@ -1,6 +1,6 @@
 export async function loadDuckNumbers() {
   try {
-    const response = await fetch('/ducknumbers.csv');
+    const response = await fetch('/Ducknumbers.csv');
     const csvText = await response.text();
     
     // Verbeterde CSV verwerking:
