@@ -23,6 +23,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [useImageProcessing, setUseImageProcessing] = useState(true);
   const [ocrQuality, setOcrQuality] = useState('accurate');
   const [advancedOcrVisible, setAdvancedOcrVisible] = useState(false);
+  const [cameraFacing, setCameraFacing] = useState('environment'); // 'environment' (achter) of 'user' (voor)
+  const [torchEnabled, setTorchEnabled] = useState(false); // flitser aan/uit
+  const [mediaStream, setMediaStream] = useState(null); // Camera mediastream opslaan
+  const [hasTorch, setHasTorch] = useState(false); // Of het apparaat een flitser heeft
   const [ocrSettings, setOcrSettings] = useState({
     // Segmentatie mode
     pagesegMode: 6, // 6 = blok tekst, 7 = één regel
@@ -398,37 +402,101 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     try {
       setScanFeedback('Camera wordt gestart...');
       
-      // Probeer eerst de achtercamera (environment)
+      // Stop bestaande camera stream als die er is
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Probeer gewenste camera te starten
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { 
-            facingMode: { exact: 'environment' },
+        const constraints = {
+          video: {
+            facingMode: { ideal: cameraFacing },
             width: { ideal: 1280 },
             height: { ideal: 720 }
           }
-        });
+        };
+        
+        console.log(`Probeert camera te starten met facing mode: ${cameraFacing}`);
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setIsStreaming(true);
-          setScanFeedback('Achtercamera actief, scannen start...');
+          setMediaStream(stream); // Sla stream op voor latere toegang
+          
+          // Controleer of de camera een flitser/torch heeft
+          const videoTrack = stream.getVideoTracks()[0];
+          
+          // Functionaliteit voor flitser/torch controleren
+          if (videoTrack) {
+            const capabilities = videoTrack.getCapabilities();
+            const hasFlash = capabilities && capabilities.torch;
+            
+            setHasTorch(hasFlash || false);
+            console.log(`Camera heeft flitser: ${hasFlash ? 'JA' : 'NEE'}`);
+            setScanFeedback(`${cameraFacing === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+          } else {
+            setHasTorch(false);
+          }
         }
-      } catch (envError) {
-        console.log('Kan achtercamera niet gebruiken, probeer andere camera:', envError);
+      } catch (primaryError) {
+        console.log(`Kan camera met facing mode '${cameraFacing}' niet gebruiken:`, primaryError);
         
-        // Als achtercamera mislukt, probeer dan elke beschikbare camera
+        // Als de gewenste camera niet werkt, probeer dan de andere
+        const alternateFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+        
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: true 
-          });
+          const alternateConstraints = {
+            video: {
+              facingMode: { ideal: alternateFacing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 }
+            }
+          };
+          
+          console.log(`Probeert alternatieve camera (${alternateFacing}) te gebruiken...`);
+          const alternateStream = await navigator.mediaDevices.getUserMedia(alternateConstraints);
           
           if (videoRef.current) {
-            videoRef.current.srcObject = stream;
+            videoRef.current.srcObject = alternateStream;
             setIsStreaming(true);
-            setScanFeedback('Camera actief, scannen start...');
+            setMediaStream(alternateStream);
+            setCameraFacing(alternateFacing); // Update de camera-richting state
+            
+            // Controleer flitser voor de alternatieve camera
+            const videoTrack = alternateStream.getVideoTracks()[0];
+            if (videoTrack) {
+              const capabilities = videoTrack.getCapabilities();
+              const hasFlash = capabilities && capabilities.torch;
+              setHasTorch(hasFlash || false);
+              setScanFeedback(`${alternateFacing === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+            }
           }
-        } catch (anyError) {
-          throw new Error(`Geen camera's beschikbaar: ${anyError.message}`);
+        } catch (alternateError) {
+          // Als beide camera's niet werken, probeer dan gewoon elke beschikbare camera
+          console.log('Beide camera\'s mislukten, probeert elke beschikbare camera:', alternateError);
+          
+          try {
+            const anyStream = await navigator.mediaDevices.getUserMedia({ video: true });
+            
+            if (videoRef.current) {
+              videoRef.current.srcObject = anyStream;
+              setIsStreaming(true);
+              setMediaStream(anyStream);
+              
+              // Controleer flitser
+              const videoTrack = anyStream.getVideoTracks()[0];
+              if (videoTrack) {
+                const capabilities = videoTrack.getCapabilities();
+                const hasFlash = capabilities && capabilities.torch;
+                setHasTorch(hasFlash || false);
+                setScanFeedback(`Camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+              }
+            }
+          } catch (anyError) {
+            throw new Error(`Geen camera's beschikbaar: ${anyError.message}`);
+          }
         }
       }
       
@@ -443,12 +511,70 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
 
   // Stop de camera
   const stopCamera = () => {
-    if (videoRef.current && videoRef.current.srcObject) {
-      const tracks = videoRef.current.srcObject.getTracks();
-      tracks.forEach(track => track.stop());
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+      setMediaStream(null);
+    }
+    
+    if (videoRef.current) {
       videoRef.current.srcObject = null;
-      setIsStreaming(false);
-      stopAutoScan();
+    }
+    
+    setIsStreaming(false);
+    stopAutoScan();
+    setTorchEnabled(false); // Zet de flitser uit wanneer de camera stopt
+  };
+  
+  // Schakel tussen voor- en achtercamera
+  const switchCamera = async () => {
+    // Toggle tussen 'environment' (achter) en 'user' (voor)
+    const newFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+    setCameraFacing(newFacing);
+    
+    // Stop huidige stream
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(track => track.stop());
+    }
+    
+    // Reset flitser status omdat we van camera wisselen
+    setTorchEnabled(false);
+    setHasTorch(false);
+    
+    // Herstart camera met nieuwe richting
+    setScanFeedback(`Wisselen naar ${newFacing === 'environment' ? 'achter' : 'voor'}camera...`);
+    
+    // Geef tijd om de camera-richting state bij te werken
+    setTimeout(() => {
+      startCamera();
+    }, 100);
+  };
+  
+  // Schakel de flitser/torch aan of uit
+  const toggleTorch = async () => {
+    if (!mediaStream || !hasTorch) return;
+    
+    try {
+      const videoTrack = mediaStream.getVideoTracks()[0];
+      if (!videoTrack) return;
+      
+      const newTorchValue = !torchEnabled;
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: newTorchValue }]
+      });
+      
+      setTorchEnabled(newTorchValue);
+      setScanFeedback(`Flitser ${newTorchValue ? 'AAN' : 'UIT'}`);
+      
+      // Reset feedback na korte tijd
+      setTimeout(() => {
+        if (isStreaming) {
+          setScanFeedback('Camera actief, scannen gaat door...');
+        }
+      }, 1000);
+    } catch (error) {
+      console.error('Kon flitser niet schakelen:', error);
+      setScanFeedback('Kon flitser niet schakelen');
+      setHasTorch(false); // Reset hasTorch omdat het waarschijnlijk niet ondersteund wordt
     }
   };
 
@@ -662,6 +788,35 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               backgroundColor: '#000'                     // Zwarte achtergrond
             }}
           />
+          
+          {/* Camera bedieningsknoppen (schakelaar en flitser) */}
+          {isStreaming && (
+            <div className="absolute top-2 left-2 right-2 flex justify-between items-center">
+              {/* Camera schakelknop */}
+              <button
+                onClick={switchCamera}
+                className="bg-black bg-opacity-50 text-white p-2 rounded-full w-10 h-10 flex items-center justify-center"
+                title="Wissel camera"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                </svg>
+              </button>
+              
+              {/* Flitser knop (alleen tonen als beschikbaar) */}
+              {hasTorch && (
+                <button
+                  onClick={toggleTorch}
+                  className={`p-2 rounded-full w-10 h-10 flex items-center justify-center ${torchEnabled ? 'bg-yellow-500 text-black' : 'bg-black bg-opacity-50 text-white'}`}
+                  title={`Flitser ${torchEnabled ? 'uit' : 'aan'} zetten`}
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
           
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
