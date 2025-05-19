@@ -10,24 +10,25 @@ export default function LandingPage({ duckNumbers }) {
   if (!mode) {
     return (
       <div className="relative h-screen w-full overflow-hidden flex flex-col">
-        {/* Achtergrondafbeelding met rubberen eend */}
-        <div className="absolute inset-0 z-0">
-          <Image
-            src="/duck-image.jpg"
-            alt="Rubberen eend"
-            fill
-            style={{ objectFit: 'cover' }}
-            priority
-          />
-        </div>
-        
-        {/* Container voor titel en knoppen */}
-        <div className="relative z-10 flex flex-col h-full justify-between">
+        {/* Container voor titel, afbeelding en knoppen */}
+        <div className="relative z-10 flex flex-col h-full justify-between items-center">
           {/* Titel bovenaan */}
           <div className="mt-8 text-center">
-            <h1 className="text-3xl font-bold text-white drop-shadow-lg">
+            <h1 className="text-3xl font-bold text-black drop-shadow-lg">
               DuckCheck
             </h1>
+          </div>
+          
+          {/* Afbeelding in het midden */}
+          <div className="flex justify-center">
+            <Image
+              src="/duck-image.jpg"
+              alt="Rubberen eend"
+              width={200}
+              height={200}
+              className="rounded-full shadow-lg"
+              priority
+            />
           </div>
           
           {/* Knoppen onderaan */}

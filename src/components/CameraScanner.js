@@ -244,13 +244,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       console.log("Gevonden getallen:", numbersFound);
       
       if (numbersFound && numbersFound.length > 0) {
-        // Filter alle getallen zodat ze maximaal 4 cijfers hebben
+        // Filter en pad getallen zodat ze exact 4 cijfers hebben
         const filteredNumbers = numbersFound.map(num => {
-          // Als het getal langer is dan 4 cijfers, neem alleen de eerste 4
-          return num.length > 4 ? num.substring(0, 4) : num;
+          if (num.length > 4) {
+            // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
+            return num.slice(-4);
+          } else if (num.length < 4) {
+            // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
+            return num.padStart(4, '0');
+          }
+          return num; // Al 4 cijfers
         });
         
-        console.log("Gefilterde getallen (max 4 cijfers):", filteredNumbers);
+        console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
         
         let bestNumber = '';
         
@@ -259,7 +265,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         if (fourDigitNumbers.length > 0) {
           bestNumber = fourDigitNumbers[0];
         } else {
-          // Als er geen 4-cijferige getallen zijn, neem het langste (maar max 4)
+          // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
+          // neem het langste beschikbare getal
           let maxLength = 0;
           for (const num of filteredNumbers) {
             if (num.length > maxLength) {
@@ -447,8 +454,20 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
     console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
     
+    // Haal de laatste 4 cijfers uit elk geldig "Duck-XXXXXX" nummer
+    const extractedValidNumbers = validNumbers.map(duckNum => {
+      // We verwachten formaat "Duck-XXXXXX" en willen de laatste 4 cijfers
+      const match = duckNum.match(/Duck-(\d{6})$/);
+      if (match && match[1]) {
+        return match[1].slice(2); // Neem alleen de laatste 4 cijfers van het 6-cijferige getal
+      }
+      return duckNum; // Fallback voor andere formaten
+    });
+    
+    console.log(`Enkele geëxtraheerde geldige nummers: ${extractedValidNumbers.slice(0,5)}`);
+    
     // Check of het nummer in de lijst voorkomt (string vergelijking)
-    const isValid = validNumbers.includes(cleanDetected);
+    const isValid = extractedValidNumbers.includes(cleanDetected);
     console.log(`In lijst: ${isValid}`);
     
     return isValid;
@@ -456,6 +475,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
 
   // Voeg cijfer toe aan handmatige invoer
   const addDigit = (digit) => {
+    // Stop als we al 4 cijfers hebben bereikt
+    if (manualInput.length >= 4) return;
+    
     const newInput = manualInput + digit;
     setManualInput(newInput);
     
