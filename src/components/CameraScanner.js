@@ -454,8 +454,14 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
     console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
     
+    // Zorg dat we het exacte pad cijfers hebben - pad met nullen indien nodig
+    const paddedDetected = cleanDetected.padStart(4, '0');
+    
     // Check of het nummer in de lijst voorkomt (string vergelijking)
-    const isValid = validNumbers.includes(cleanDetected);
+    // Probeer zowel met als zonder padding voor het geval dat
+    const isValid = validNumbers.includes(paddedDetected) || validNumbers.includes(cleanDetected);
+    
+    console.log(`Zoeken naar: "${paddedDetected}" of "${cleanDetected}"`);
     console.log(`In lijst: ${isValid}`);
     
     return isValid;
@@ -471,8 +477,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     
     // Controleer het nummer direct na elke invoer
     setDetectedNumber(newInput);
+    
+    // Valideer pas wanneer we 4 cijfers hebben of als dit een getal is dat met 0 begint
+    // (dan valideren we ook onmiddellijk bij 1, 2 of 3 cijfers)
     const isValid = validateNumber(newInput, duckNumbers);
     setIsValidNumber(isValid);
+    
+    console.log(`Handmatige invoer: "${newInput}", Geldig: ${isValid}`);
     
     // Rapporteer ook aan de parent component
     if (onNumberDetected) {
@@ -852,6 +863,14 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       startCamera();
     }
   }, []);
+
+  useEffect(() => {
+    // Voeg debug informatie toe wanneer de component laadt
+    if (duckNumbers && duckNumbers.length > 0) {
+      console.log('Geladen eendnummers (eerste 10):', duckNumbers.slice(0, 10));
+      console.log('Totaal aantal eendnummers:', duckNumbers.length);
+    }
+  }, [duckNumbers]);
 
   return (
     <div className="flex flex-col items-center">
