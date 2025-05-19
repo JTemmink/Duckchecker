@@ -22,6 +22,30 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [debugImage, setDebugImage] = useState(null);
   const [useImageProcessing, setUseImageProcessing] = useState(true);
   const [ocrQuality, setOcrQuality] = useState('accurate');
+  const [advancedOcrVisible, setAdvancedOcrVisible] = useState(false);
+  const [ocrSettings, setOcrSettings] = useState({
+    // Segmentatie mode
+    pagesegMode: 6, // 6 = blok tekst, 7 = één regel
+    // OCR engine mode 
+    engineMode: 2, // 2 = LSTM, 3 = alleen LSTM (sneller)
+    // Tekst parameters
+    heavyNr: true,
+    minLinesize: 2.5,
+    numericMode: true,
+    preserveSpaces: false,
+    // LSTM parameters
+    lstmChoiceMode: 2,
+    lstmIterations: 15,
+    // Kwaliteitsparameters
+    oldXheight: false,
+    forcePropWords: false,
+    doInvert: false, 
+    goodQualityRating: 0.98,
+    minSlope: 0.414,
+    maxSlope: 0.414,
+    minXheight: 8,
+    maxOutlineChildren: 40,
+  });
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
@@ -49,67 +73,68 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const updateOcrParameters = async () => {
     if (!workerRef.current) return;
     
-    // Basisinstellingen voor alle kwaliteitsniveaus
-    const baseParams = {
-      tessedit_char_whitelist: '0123456789',
-      tessjs_create_hocr: '0',
-      tessjs_create_tsv: '0',
-      tessjs_create_box: '0',
-      tessjs_create_unlv: '0',
-      tessjs_create_osd: '0',
-      segment_nonalphabetic_script: '1', // Betere segmentatie voor cijfers
-      textord_space_size_is_variable: '0' // Vaste spatiëring (beter voor cijfers)
-    };
-    
-    // Kwaliteitsspecifieke parameters
-    let qualityParams = {};
+    // Nieuwe instellingen op basis van de gekozen kwaliteit
+    let newSettings = { ...ocrSettings };
     
     switch (ocrQuality) {
       case 'fast':
-        qualityParams = {
-          tessedit_pageseg_mode: '7', // Eén regel tekst
-          tessedit_ocr_engine_mode: '3', // Alleen LSTM (sneller)
-          textord_heavy_nr: '1',
-          textord_min_linesize: '2.5',
-          classify_bln_numeric_mode: '1',
-          preserve_interword_spaces: '0',
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 7,           // Eén regel tekst
+          engineMode: 3,            // Alleen LSTM (sneller)
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 1,         // Snelle modus
+          lstmIterations: 10,
+          goodQualityRating: 0.95,
         };
         break;
         
       case 'accurate':
-        qualityParams = {
-          tessedit_pageseg_mode: '6', // Blok tekst (nauwkeuriger voor getallen)
-          tessedit_ocr_engine_mode: '2', // LSTM (nauwkeuriger)
-          lstm_choice_mode: '2', // Meerdere opties evalueren
-          lstm_choice_iterations: '15', // Verhoogd van 10 naar 15 voor meer iteraties
-          textord_really_old_xheight: '0', // Moderne teksthoogte berekening
-          textord_force_make_prop_words: '0',
-          tessedit_do_invert: '0',
-          tessedit_good_quality_rating: '0.98', // Verhoogd van 0.95 naar 0.98
-          classify_min_slope: '0.414',  // Nauwkeurigere tekstherkenning
-          classify_max_slope: '0.414',  // Nauwkeurigere tekstherkenning
-          textord_min_xheight: '8',     // Minimum teksthoogte voor herkenning
-          edges_max_children_per_outline: '40', // Meer details in herkenning
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 6,           // Blok tekst (nauwkeuriger voor getallen)
+          engineMode: 2,            // LSTM (nauwkeuriger)
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 2,         // Betere kwaliteit
+          lstmIterations: 15,
+          oldXheight: false,
+          forcePropWords: false,
+          doInvert: false,
+          goodQualityRating: 0.98,
+          minSlope: 0.414,
+          maxSlope: 0.414, 
+          minXheight: 8,
+          maxOutlineChildren: 40,
         };
         break;
         
       default: // 'balanced'
-        qualityParams = {
-          tessedit_pageseg_mode: '7', 
-          tessedit_ocr_engine_mode: '2',
-          textord_heavy_nr: '1',
-          textord_min_linesize: '2.5',
-          classify_bln_numeric_mode: '1',
-          preserve_interword_spaces: '0',
-          tessedit_do_invert: '0',
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 7,
+          engineMode: 2,
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 1,
+          lstmIterations: 12,
+          doInvert: false,
+          goodQualityRating: 0.96,
         };
     }
     
-    // Combineer basis en kwaliteitsparameters
-    const combinedParams = { ...baseParams, ...qualityParams };
+    // Update state met de nieuwe instellingen
+    setOcrSettings(newSettings);
     
-    // Update Tesseract worker
-    await workerRef.current.setParameters(combinedParams);
+    // Pas de nieuwe instellingen toe
+    await applyCustomOcrParameters(newSettings);
   };
 
   // Verwerk een afbeelding voordat OCR wordt uitgevoerd
@@ -820,9 +845,257 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                       Nauwkeurig
                     </button>
                   </div>
-                  <p className="text-xs text-gray-600 mt-1">
+                  <p className="text-xs text-gray-600 mt-1 mb-3">
                     Nauwkeuriger OCR kost meer tijd maar kan beter werken bij lastige nummers
                   </p>
+                  
+                  {/* Toggle voor geavanceerde OCR-instellingen */}
+                  <div 
+                    className="flex items-center justify-between cursor-pointer px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
+                    onClick={() => setAdvancedOcrVisible(!advancedOcrVisible)}
+                  >
+                    <span className="font-medium text-sm">Geavanceerde OCR-instellingen</span>
+                    <span className="text-xs">{advancedOcrVisible ? '▼' : '▶'}</span>
+                  </div>
+                  
+                  {/* Geavanceerde OCR-instellingen */}
+                  {advancedOcrVisible && (
+                    <div className="mt-2 bg-gray-100 p-3 rounded-lg space-y-4 text-sm">
+                      <div>
+                        <h4 className="font-semibold mb-2 text-blue-800">Algemene OCR-instellingen</h4>
+                        
+                        {/* Paginasegmentatie modus */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            Paginasegmentatie Modus: <span className="text-blue-600">{ocrSettings.pagesegMode}</span>
+                          </label>
+                          <div className="flex text-xs text-gray-600 mb-1 justify-between">
+                            <span>Blok tekst</span>
+                            <span>Eén regel</span>
+                            <span>Eén woord</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="1"
+                            max="13"
+                            step="1"
+                            value={ocrSettings.pagesegMode}
+                            onChange={(e) => updateOcrSetting('pagesegMode', parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            6 = Blok tekst (nauwkeuriger) / 7 = Eén regel / 8 = Eén woord
+                          </div>
+                        </div>
+                        
+                        {/* Engine modus */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            OCR Engine Modus: <span className="text-blue-600">{ocrSettings.engineMode}</span>
+                          </label>
+                          <div className="flex text-xs text-gray-600 mb-1 justify-between">
+                            <span>Legacy + LSTM</span>
+                            <span>Alleen LSTM</span>
+                          </div>
+                          <input
+                            type="range"
+                            min="2"
+                            max="3"
+                            step="1"
+                            value={ocrSettings.engineMode}
+                            onChange={(e) => updateOcrSetting('engineMode', parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            2 = Legacy + LSTM (nauwkeuriger) / 3 = Alleen LSTM (sneller)
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <h4 className="font-semibold mb-2 text-blue-800">Tekstherkenning Parameters</h4>
+                        
+                        {/* Binary toggles voor tekstherkenning */}
+                        <div className="grid grid-cols-2 gap-2">
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              id="heavyNr"
+                              checked={ocrSettings.heavyNr}
+                              onChange={(e) => updateOcrSetting('heavyNr', e.target.checked)}
+                              className="mr-2 h-4 w-4"
+                            />
+                            <label htmlFor="heavyNr" className="text-xs">
+                              Heavy NR
+                            </label>
+                          </div>
+                          
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              id="numericMode"
+                              checked={ocrSettings.numericMode}
+                              onChange={(e) => updateOcrSetting('numericMode', e.target.checked)}
+                              className="mr-2 h-4 w-4"
+                            />
+                            <label htmlFor="numericMode" className="text-xs">
+                              Numeric Mode
+                            </label>
+                          </div>
+                          
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              id="preserveSpaces"
+                              checked={ocrSettings.preserveSpaces}
+                              onChange={(e) => updateOcrSetting('preserveSpaces', e.target.checked)}
+                              className="mr-2 h-4 w-4"
+                            />
+                            <label htmlFor="preserveSpaces" className="text-xs">
+                              Spaties behouden
+                            </label>
+                          </div>
+                          
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
+                              id="doInvert"
+                              checked={ocrSettings.doInvert}
+                              onChange={(e) => updateOcrSetting('doInvert', e.target.checked)}
+                              className="mr-2 h-4 w-4"
+                            />
+                            <label htmlFor="doInvert" className="text-xs">
+                              Inverteer beeld
+                            </label>
+                          </div>
+                        </div>
+                        
+                        {/* Min Line Size */}
+                        <div className="mt-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            Min Line Size: <span className="text-blue-600">{ocrSettings.minLinesize.toFixed(1)}</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="1"
+                            max="5"
+                            step="0.1"
+                            value={ocrSettings.minLinesize}
+                            onChange={(e) => updateOcrSetting('minLinesize', parseFloat(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <h4 className="font-semibold mb-2 text-blue-800">LSTM Parameters</h4>
+                        
+                        {/* LSTM Choice Mode */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            LSTM Choice Mode: <span className="text-blue-600">{ocrSettings.lstmChoiceMode}</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="0"
+                            max="3"
+                            step="1"
+                            value={ocrSettings.lstmChoiceMode}
+                            onChange={(e) => updateOcrSetting('lstmChoiceMode', parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            0 = Standaard / 1 = Snel / 2 = Betere kwaliteit
+                          </div>
+                        </div>
+                        
+                        {/* LSTM Iterations */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            LSTM Iteraties: <span className="text-blue-600">{ocrSettings.lstmIterations}</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="5"
+                            max="25"
+                            step="1"
+                            value={ocrSettings.lstmIterations}
+                            onChange={(e) => updateOcrSetting('lstmIterations', parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                          <div className="text-[10px] text-gray-500 mt-1">
+                            Hoger = nauwkeuriger maar langzamer (aanbevolen: 10-15)
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <h4 className="font-semibold mb-2 text-blue-800">Kwaliteit Parameters</h4>
+                        
+                        {/* Kwaliteitsrating */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            Quality Rating: <span className="text-blue-600">{ocrSettings.goodQualityRating.toFixed(2)}</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="0.8"
+                            max="1.0"
+                            step="0.01"
+                            value={ocrSettings.goodQualityRating}
+                            onChange={(e) => updateOcrSetting('goodQualityRating', parseFloat(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                        </div>
+                        
+                        {/* Min X Height */}
+                        <div className="mb-3">
+                          <label className="block mb-1 text-sm font-medium">
+                            Min X Height: <span className="text-blue-600">{ocrSettings.minXheight}</span>
+                          </label>
+                          <input
+                            type="range"
+                            min="5"
+                            max="15"
+                            step="1"
+                            value={ocrSettings.minXheight}
+                            onChange={(e) => updateOcrSetting('minXheight', parseInt(e.target.value))}
+                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
+                          />
+                        </div>
+                        
+                        {/* Reset knop */}
+                        <button
+                          onClick={() => {
+                            // Zet alle instellingen terug naar standaardwaarden
+                            const defaultSettings = {
+                              pagesegMode: 6,
+                              engineMode: 2,
+                              heavyNr: true,
+                              minLinesize: 2.5,
+                              numericMode: true,
+                              preserveSpaces: false,
+                              lstmChoiceMode: 2,
+                              lstmIterations: 15,
+                              oldXheight: false,
+                              forcePropWords: false,
+                              doInvert: false,
+                              goodQualityRating: 0.98,
+                              minSlope: 0.414,
+                              maxSlope: 0.414,
+                              minXheight: 8,
+                              maxOutlineChildren: 40,
+                            };
+                            setOcrSettings(defaultSettings);
+                            applyCustomOcrParameters(defaultSettings);
+                          }}
+                          className="w-full px-2 py-1 bg-red-500 text-white rounded-lg text-sm mt-3"
+                        >
+                          Reset alle OCR-instellingen
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </details>
@@ -871,6 +1144,69 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       console.log('Totaal aantal eendnummers:', duckNumbers.length);
     }
   }, [duckNumbers]);
+
+  // Update ocrSettings object met nieuwe waarde
+  const updateOcrSetting = (key, value) => {
+    const newSettings = { ...ocrSettings, [key]: value };
+    setOcrSettings(newSettings);
+    
+    // Update de OCR parameters met de nieuwe instellingen
+    applyCustomOcrParameters(newSettings);
+  };
+  
+  // Functie om aangepaste OCR parameters toe te passen
+  const applyCustomOcrParameters = async (settings) => {
+    if (!workerRef.current) return;
+    
+    // Basisinstellingen worden altijd toegepast
+    const baseParams = {
+      tessedit_char_whitelist: '0123456789',
+      tessjs_create_hocr: '0',
+      tessjs_create_tsv: '0',
+      tessjs_create_box: '0',
+      tessjs_create_unlv: '0',
+      tessjs_create_osd: '0',
+      segment_nonalphabetic_script: '1',
+      textord_space_size_is_variable: '0'
+    };
+    
+    // Aangepaste parameters op basis van de UI-instellingen
+    const customParams = {
+      tessedit_pageseg_mode: settings.pagesegMode.toString(),
+      tessedit_ocr_engine_mode: settings.engineMode.toString(),
+      textord_heavy_nr: settings.heavyNr ? '1' : '0',
+      textord_min_linesize: settings.minLinesize.toString(),
+      classify_bln_numeric_mode: settings.numericMode ? '1' : '0',
+      preserve_interword_spaces: settings.preserveSpaces ? '1' : '0',
+      lstm_choice_mode: settings.lstmChoiceMode.toString(),
+      lstm_choice_iterations: settings.lstmIterations.toString(),
+      textord_really_old_xheight: settings.oldXheight ? '1' : '0',
+      textord_force_make_prop_words: settings.forcePropWords ? '1' : '0',
+      tessedit_do_invert: settings.doInvert ? '1' : '0',
+      tessedit_good_quality_rating: settings.goodQualityRating.toString(),
+      classify_min_slope: settings.minSlope.toString(),
+      classify_max_slope: settings.maxSlope.toString(),
+      textord_min_xheight: settings.minXheight.toString(),
+      edges_max_children_per_outline: settings.maxOutlineChildren.toString(),
+    };
+    
+    // Combineer basis en aangepaste parameters
+    const combinedParams = { ...baseParams, ...customParams };
+    
+    // Pas parameters toe op de worker
+    try {
+      await workerRef.current.setParameters(combinedParams);
+      console.log('OCR parameters toegepast:', combinedParams);
+      setScanFeedback('OCR instellingen bijgewerkt');
+      setTimeout(() => {
+        if (isStreaming) {
+          setScanFeedback('Camera actief, scannen gaat door...');
+        }
+      }, 1500);
+    } catch (error) {
+      console.error('Fout bij het instellen van OCR parameters:', error);
+    }
+  };
 
   return (
     <div className="flex flex-col items-center">
