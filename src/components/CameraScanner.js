@@ -2,14 +2,14 @@
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { createWorker } from 'tesseract.js';
 
-export default function CameraScanner({ duckNumbers, onNumberDetected }) {
+export default function CameraScanner({ duckNumbers, onNumberDetected, initialMode = 'camera' }) {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [detectedNumber, setDetectedNumber] = useState('');
   const [isValidNumber, setIsValidNumber] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [isManualMode, setIsManualMode] = useState(false);
+  const [isManualMode, setIsManualMode] = useState(initialMode === 'manual');
   const [manualInput, setManualInput] = useState('');
   const [scanFeedback, setScanFeedback] = useState('');
   const workerRef = useRef(null);
@@ -835,6 +835,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected }) {
       </>
     );
   };
+
+  // Voeg dit effect toe om de camera automatisch te starten als dat de initiële modus is
+  useEffect(() => {
+    if (initialMode === 'camera' && !isStreaming && !isManualMode) {
+      startCamera();
+    }
+  }, []);
 
   return (
     <div className="flex flex-col items-center">

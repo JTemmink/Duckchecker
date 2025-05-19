@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import CameraScanner from '../components/CameraScanner';
+import LandingPage from '../components/LandingPage';
 import { loadDuckNumbers } from '../utils/loadCsv';
 
 export default function Home() {
@@ -34,36 +34,21 @@ export default function Home() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 sm:p-8">
-      <h1 className="text-3xl font-bold mb-4 text-center">DuckCheck Nummer Scanner</h1>
-      
+    <main className="flex min-h-screen flex-col items-center">
       {isLoading ? (
-        <div className="flex flex-col items-center justify-center">
+        <div className="flex flex-col items-center justify-center h-screen">
           <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
           <p className="mt-4">Nummers laden...</p>
         </div>
       ) : error ? (
-        <div className="p-4 bg-red-100 text-red-700 rounded-lg">
+        <div className="p-4 bg-red-100 text-red-700 rounded-lg m-4">
           {error}
         </div>
       ) : (
-        <>
-          <div className="mb-6 text-center text-sm text-gray-700 max-w-md">
-            <p className="mb-2">Deze app kan op twee manieren nummers controleren:</p>
-            <ul className="list-disc text-left pl-6 mb-4">
-              <li>Via de camera (vereist cameratoegang)</li>
-              <li>Via handmatige invoer (gebruik de knop "Handmatig invoeren")</li>
-            </ul>
-            <p>Als de camera niet werkt, gebruik dan de handmatige invoermodus.</p>
-          </div>
-
-          <CameraScanner duckNumbers={duckNumbers} onNumberDetected={handleNumberDetected} />
-          
-          <div className="mt-8 text-center text-sm text-gray-500">
-            <p className="mb-2">Deze app controleert nummers tegen de database.</p>
-            <p>Bij camera-scannen wordt een nummer twee keer gecontroleerd voor nauwkeurigheid.</p>
-          </div>
-        </>
+        <LandingPage 
+          duckNumbers={duckNumbers} 
+          onNumberDetected={handleNumberDetected}
+        />
       )}
     </main>
   );
