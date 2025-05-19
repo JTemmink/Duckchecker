@@ -73,13 +73,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     };
   }, [ocrQuality]);
 
-  // Functie om OCR parameters te updaten op basis van kwaliteit
+  // Functie om OCR parameters te updaten op basis van kwaliteit - ALLEEN voor initiële setup
   const updateOcrParameters = async () => {
     if (!workerRef.current) return;
+    
+    // Deze functie wordt alleen gebruikt voor de initiële setup
+    // Voor latere updates gebruiken we updateOcrSetting en de kwaliteitsknoppen
     
     // Nieuwe instellingen op basis van de gekozen kwaliteit
     let newSettings = { ...ocrSettings };
     
+    // We voegen alleen de standaardinstellingen toe voor de gekozen kwaliteit
+    // zonder bestaande aangepaste instellingen te overschrijven, behalve bij initialisatie
     switch (ocrQuality) {
       case 'fast':
         newSettings = {
@@ -256,7 +261,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       // TESSERACT PARAMETERS AANPASSEN
       // Geoptimaliseerde parameters voor cijferherkenning
       // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
-      await updateOcrParameters();
+      // await updateOcrParameters(); // Verwijderd om handmatige instellingen te behouden
       
       const { data } = await workerRef.current.recognize(
         useImageProcessing ? processedImageData : originalImageData
@@ -994,12 +999,31 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 
                 <div className="mt-3">
                   <label className="block mb-1 font-medium">OCR kwaliteit (snelheid/nauwkeurigheid):</label>
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="text-xs text-blue-600">
+                      Actieve modus: {ocrQuality}
+                      {/* Indicator voor aangepaste instellingen */}
+                      <span className="ml-2 px-1 py-0.5 bg-yellow-100 text-yellow-800 rounded text-[10px]">
+                        Aangepaste instellingen actief
+                      </span>
+                    </div>
+                  </div>
                   <div className="grid grid-cols-3 gap-1">
                     <button
                       className={`px-2 py-1 text-xs rounded ${ocrQuality === 'fast' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
                       onClick={() => {
                         setOcrQuality('fast');
-                        updateOcrParameters();
+                        // Behoud bestaande instellingen en pas alleen de snelheidsgerelateerde instellingen aan
+                        const fastSettings = {
+                          ...ocrSettings, // Behoud huidige instellingen
+                          pagesegMode: 7,           // Eén regel tekst
+                          engineMode: 3,            // Alleen LSTM (sneller)
+                          lstmChoiceMode: 1,         // Snelle modus
+                          lstmIterations: 10,
+                        };
+                        setOcrSettings(fastSettings);
+                        applyCustomOcrParameters(fastSettings);
+                        console.log('Fast-modus geactiveerd met behoud van aangepaste instellingen');
                       }}
                     >
                       Snel
@@ -1008,7 +1032,17 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                       className={`px-2 py-1 text-xs rounded ${ocrQuality === 'balanced' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
                       onClick={() => {
                         setOcrQuality('balanced');
-                        updateOcrParameters();
+                        // Behoud bestaande instellingen en pas alleen de gebalanceerde instellingen aan
+                        const balancedSettings = {
+                          ...ocrSettings, // Behoud huidige instellingen
+                          pagesegMode: 7,
+                          engineMode: 2,
+                          lstmChoiceMode: 1,
+                          lstmIterations: 12,
+                        };
+                        setOcrSettings(balancedSettings);
+                        applyCustomOcrParameters(balancedSettings);
+                        console.log('Balanced-modus geactiveerd met behoud van aangepaste instellingen');
                       }}
                     >
                       Gebalanceerd
@@ -1016,8 +1050,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     <button
                       className={`px-2 py-1 text-xs rounded ${ocrQuality === 'accurate' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
                       onClick={() => {
-                        setOcrQuality('accurate'); 
-                        updateOcrParameters();
+                        setOcrQuality('accurate');
+                        // Behoud bestaande instellingen en pas alleen de nauwkeurigheidsgerelateerde instellingen aan
+                        const accurateSettings = {
+                          ...ocrSettings, // Behoud huidige instellingen
+                          pagesegMode: 6,           // Blok tekst (nauwkeuriger voor getallen)
+                          engineMode: 2,            // LSTM (nauwkeuriger)
+                          lstmChoiceMode: 2,         // Betere kwaliteit
+                          lstmIterations: 15,
+                        };
+                        setOcrSettings(accurateSettings);
+                        applyCustomOcrParameters(accurateSettings);
+                        console.log('Accurate-modus geactiveerd met behoud van aangepaste instellingen');
                       }}
                     >
                       Nauwkeurig
