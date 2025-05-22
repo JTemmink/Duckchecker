@@ -19,8 +19,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [isPaused, setIsPaused] = useState(false);
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
-  const [zoomLevel, setZoomLevel] = useState(1.0);
-  const [cropZoomLevel, setCropZoomLevel] = useState(1.0);
+  const [zoomLevel, setZoomLevel] = useState(2.2); // 220% standaard
+  const [cropZoomLevel, setCropZoomLevel] = useState(0.4); // 40% standaard
   const [showDebug, setShowDebug] = useState(false);
   const [debugImage, setDebugImage] = useState(null);
   const [debugProcessedImage, setDebugProcessedImage] = useState(null);
@@ -1964,14 +1964,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           {isStreaming && ocrEngine === 'chatgpt' && (
             <div className="absolute bottom-16 left-0 right-0 flex justify-center">
               <button
-                onClick={captureImageForChatGPT}
-                disabled={isProcessing}
-                className={`
-                  px-4 py-3 rounded-lg text-white font-bold shadow-lg
-                  ${isProcessing ? 'bg-gray-500' : 'bg-blue-600 animate-pulse'}
-                `}
+                disabled
+                className="px-4 py-3 rounded-lg text-white font-bold shadow-lg bg-gray-400 cursor-not-allowed opacity-60"
+                title="Deze functie is uitgeschakeld"
               >
-                {isProcessing ? 'Bezig met verwerken...' : 'Scan met ChatGPT Vision'}
+                Scan met ChatGPT Vision (uitgeschakeld)
               </button>
             </div>
           )}
@@ -2168,8 +2165,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     GOCR
                   </button>
                   <button 
-                    onClick={() => setOcrEngine('chatgpt')}
-                    className={`px-2 py-1 text-xs rounded flex-1 ${ocrEngine === 'chatgpt' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                    disabled
+                    className={`px-2 py-1 text-xs rounded flex-1 bg-gray-400 cursor-not-allowed opacity-60`}
                   >
                     ChatGPT
                   </button>
