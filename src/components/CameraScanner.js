@@ -620,8 +620,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       // Alleen OpenCV gebruiken als het geladen is
       if (openCvLoaded) {
         // Canvas naar OpenCV Mat converteren
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const src = cv.matFromImageData(imageData);
         
         // Doelmat aanmaken met dezelfde grootte en type
@@ -1005,168 +1005,195 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
 
   // Neem een snapshot en verwerk het met OCR
   const captureImage = useCallback(async () => {
-    if (!isStreaming || isProcessing || !workerRef.current) return;
+    // Indien in debug-modus, altijd afbeeldingen bijwerken zelfs als al verwerking bezig is
+    const isDebugCapture = showDebug && isProcessing;
     
-    setIsProcessing(true);
-    processingTimeRef.current = new Date().getTime(); // Sla het tijdstip op waarop de verwerking start
-    setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
+    // Controleer of we al bezig zijn met verwerken, behalve bij een debug-capture
+    if (!isStreaming || (isProcessing && !isDebugCapture) || !workerRef.current) return;
+    
+    // Als dit alleen een debug-capture is, sla dan de rest van de OCR-verwerking over
+    if (!isDebugCapture) {
+      setIsProcessing(true);
+      processingTimeRef.current = new Date().getTime(); // Sla het tijdstip op waarop de verwerking start
+      setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
+    }
     
     // Veiligheidstimer om isProcessing te resetten als verwerking vastloopt
-    const processingTimeout = setTimeout(() => {
-      console.log('OCR-verwerking duurde te lang, resetten...');
-      setIsProcessing(false);
-      processingTimeRef.current = null; // Reset processing time reference
-      setScanFeedback('Scannen hervat na timeout...');
-    }, 8000); // 8 seconden timeout
+    // Alleen instellen als dit geen debug-capture is
+    let processingTimeout;
+    if (!isDebugCapture) {
+      processingTimeout = setTimeout(() => {
+        console.log('OCR-verwerking duurde te lang, resetten...');
+        setIsProcessing(false);
+        processingTimeRef.current = null; // Reset processing time reference
+        setScanFeedback('Scannen hervat na timeout...');
+      }, 8000); // 8 seconden timeout
+    }
     
     try {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    if (video && canvas) {
-      const context = canvas.getContext('2d');
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
       
+      if (video && canvas) {
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        
         // Pas canvas grootte aan voor optimale OCR met hogere pixeldichtheid
         // De fysieke grootte van de uitsnede blijft hetzelfde, maar we verhogen de pixeldichtheid
         canvas.width = scanFrame.width * scanFrame.pixelDensity;
         canvas.height = scanFrame.height * scanFrame.pixelDensity;
-      
-      // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
-      // rekening houdend met zoomniveau
-      
-      // 1. Bepaal de werkelijke afmetingen van het videoframe
-      const videoWidth = video.videoWidth;
-      const videoHeight = video.videoHeight;
-      
-      // 2. Bereken het middelpunt van de video
-      const centerX = videoWidth / 2;
-      const centerY = videoHeight / 2;
-      
-      // 3. Bereken de schaal voor het uitsnijden, rekening houdend met zoom
-      // Dit zorgt dat we precies het juiste gebied uitsnijden dat in het kader zichtbaar is
-      const scaledWidth = scanFrame.width * zoomLevel;
-      const scaledHeight = scanFrame.height * zoomLevel;
-      
-      // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
-      // Dit zorgt dat we het juiste gebied pakken, ongeacht het zoomniveau
-      const frameX = centerX - (scaledWidth / 2);
-      const frameY = centerY - (scaledHeight / 2);
-      
-      // Trek alleen het gedeelte binnen het kader op de canvas
+        
+        // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
+        // rekening houdend met zoomniveau
+        
+        // 1. Bepaal de werkelijke afmetingen van het videoframe
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        
+        // 2. Bereken het middelpunt van de video
+        const centerX = videoWidth / 2;
+        const centerY = videoHeight / 2;
+        
+        // 3. Bereken de schaal voor het uitsnijden, rekening houdend met zoom
+        // Dit zorgt dat we precies het juiste gebied uitsnijden dat in het kader zichtbaar is
+        const scaledWidth = scanFrame.width * zoomLevel;
+        const scaledHeight = scanFrame.height * zoomLevel;
+        
+        // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
+        // Dit zorgt dat we het juiste gebied pakken, ongeacht het zoomniveau
+        const frameX = centerX - (scaledWidth / 2);
+        const frameY = centerY - (scaledHeight / 2);
+        
+        // Trek alleen het gedeelte binnen het kader op de canvas
         // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
-      context.drawImage(
-        video,                // bron
-        frameX, frameY,       // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
-        scaledWidth, scaledHeight,  // grootte uitsnede, gecorrigeerd voor zoom
-        0, 0,                 // beginpunt op canvas
+        context.drawImage(
+          video,                // bron
+          frameX, frameY,       // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
+          scaledWidth, scaledHeight,  // grootte uitsnede, gecorrigeerd voor zoom
+          0, 0,                 // beginpunt op canvas
           canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
-      );
-      
-      // Maak een kopie van originele afbeelding voor debug
-      if (showDebug) {
-        try {
-          // Direct het originele canvas opslaan als data URL
-          const originalUrl = canvas.toDataURL('image/png');
-          console.log("Debug: Originele afbeelding URL lengte:", originalUrl.length);
-          // Force een nieuwe string om zeker te zijn dat het een nieuwe referentie is
-          setDebugImage(originalUrl + "");
-        } catch (e) {
-          console.error("Fout bij opslaan originele debug afbeelding:", e);
-        }
-      }
-      
-      // Pas beeldverbetering toe
-      preprocessImage(canvas);
-      
-      // Maak een kopie van het geoptimaliseerde beeld
-      if (showDebug) {
-        try {
-          // Direct het verwerkte canvas opslaan als data URL
-          const processedUrl = canvas.toDataURL('image/png');
-          console.log("Debug: Verwerkte afbeelding URL lengte:", processedUrl.length);
-          // Force een nieuwe string om zeker te zijn dat het een nieuwe referentie is
-          setDebugProcessedImage(processedUrl + "");
-        } catch (e) {
-          console.error("Fout bij opslaan verwerkte debug afbeelding:", e);
-        }
-      }
-      
-        try {
-      const { data } = await workerRef.current.recognize(
-        useImageProcessing ? canvas.toDataURL('image/png') : canvas.toDataURL('image/png')
-      );
-      const text = data.text.trim();
-      
-      // Debug info
-      console.log("OCR tekst:", text);
-      console.log("OCR confidence:", data.confidence);
-      
-      // Verbeterde nummerextractie
-      // Eerst zoeken naar alle getallen in de gedetecteerde tekst
-      const numbersFound = text.match(/\d+/g);
-      console.log("Gevonden getallen:", numbersFound);
-      
-      if (numbersFound && numbersFound.length > 0) {
-        // Filter en pad getallen zodat ze exact 4 cijfers hebben
-        const filteredNumbers = numbersFound.map(num => {
-          if (num.length > 4) {
-            // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
-            return num.slice(-4);
-          } else if (num.length < 4) {
-            // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
-            return num.padStart(4, '0');
-          }
-          return num; // Al 4 cijfers
-        });
+        );
         
-        console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
-        
-        let bestNumber = '';
-        
-        // Zoek naar exacte 4-cijferige getallen (prioriteit)
-        const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
-        if (fourDigitNumbers.length > 0) {
-          bestNumber = fourDigitNumbers[0];
-        } else {
-          // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
-          // neem het langste beschikbare getal
-          let maxLength = 0;
-          for (const num of filteredNumbers) {
-            if (num.length > maxLength) {
-              maxLength = num.length;
-              bestNumber = num;
-            }
+        // Maak een kopie van originele afbeelding voor debug
+        if (showDebug) {
+          try {
+            // Direct het originele canvas opslaan als data URL
+            const originalUrl = canvas.toDataURL('image/png');
+            console.log("Debug: Originele afbeelding capture lengte:", originalUrl.length);
+            
+            // Forceer state update met een nieuwe string
+            setDebugImage("" + originalUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan originele debug afbeelding:", e);
           }
         }
         
-        // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
-        const number = bestNumber;
+        // Pas beeldverbetering toe
+        preprocessImage(canvas);
         
-        // Als we bezig zijn met verificatie
-        if (verificationInProgress && lastDetectedNumber) {
-          if (number === lastDetectedNumber) {
-            // Nummer is geverifieerd, verwerk het nu
-            setDetectedNumber(number);
+        // Maak een kopie van het geoptimaliseerde beeld
+        if (showDebug) {
+          try {
+            // Direct het verwerkte canvas opslaan als data URL
+            const processedUrl = canvas.toDataURL('image/png');
+            console.log("Debug: Verwerkte afbeelding capture lengte:", processedUrl.length);
             
-            // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
-            const isValid = validateNumber(number, duckNumbers);
-            setIsValidNumber(isValid);
+            // Forceer state update met een nieuwe string
+            setDebugProcessedImage("" + processedUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan verwerkte debug afbeelding:", e);
+          }
+        }
+        
+        // Als dit alleen voor debug is, sla dan OCR over
+        if (isDebugCapture) {
+          console.log("Debug-capture voltooid, OCR overgeslagen");
+          return;
+        }
+        
+        try {
+          const { data } = await workerRef.current.recognize(
+            useImageProcessing ? canvas.toDataURL('image/png') : canvas.toDataURL('image/png')
+          );
+          
+          // Verdere OCR verwerking - rest van de originele functie
+          const text = data.text.trim();
+          
+          // Debug info
+          console.log("OCR tekst:", text);
+          console.log("OCR confidence:", data.confidence);
+          
+          // Verbeterde nummerextractie
+          // Eerst zoeken naar alle getallen in de gedetecteerde tekst
+          const numbersFound = text.match(/\d+/g);
+          console.log("Gevonden getallen:", numbersFound);
+          
+          if (numbersFound && numbersFound.length > 0) {
+            // Filter en pad getallen zodat ze exact 4 cijfers hebben
+            const filteredNumbers = numbersFound.map(num => {
+              if (num.length > 4) {
+                // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
+                return num.slice(-4);
+              } else if (num.length < 4) {
+                // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
+                return num.padStart(4, '0');
+              }
+              return num; // Al 4 cijfers
+            });
             
-            setScanFeedback(`Nummer geverifieerd: ${number}`);
+            console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
             
-            if (onNumberDetected) {
-              onNumberDetected(number, isValid);
+            let bestNumber = '';
+            
+            // Zoek naar exacte 4-cijferige getallen (prioriteit)
+            const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
+            if (fourDigitNumbers.length > 0) {
+              bestNumber = fourDigitNumbers[0];
+            } else {
+              // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
+              // neem het langste beschikbare getal
+              let maxLength = 0;
+              for (const num of filteredNumbers) {
+                if (num.length > maxLength) {
+                  maxLength = num.length;
+                  bestNumber = num;
+                }
+              }
             }
             
-            // Reset verificatie status
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
+            // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
+            const number = bestNumber;
             
-            // Pauzeer het scannen voor 2 seconden
-            setIsPaused(true);
+            // Als we bezig zijn met verificatie
+            if (verificationInProgress && lastDetectedNumber) {
+              if (number === lastDetectedNumber) {
+                // Nummer is geverifieerd, verwerk het nu
+                setDetectedNumber(number);
+                
+                // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
+                const isValid = validateNumber(number, duckNumbers);
+                setIsValidNumber(isValid);
+                
+                setScanFeedback(`Nummer geverifieerd: ${number}`);
+                
+                if (onNumberDetected) {
+                  onNumberDetected(number, isValid);
+                }
+                
+                // Reset verificatie status
+                setVerificationInProgress(false);
+                setLastDetectedNumber(null);
+                
+                // Pauzeer het scannen voor 2 seconden, maar zorg dat debug beelden nog werken
+                setIsPaused(true);
                 console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
-            setTimeout(() => {
-              setIsPaused(false);
+                
+                // In debug modus blijven scannen voor afbeeldingen, maar niet verwerken
+                if (showDebug) {
+                  setScanFeedback(`Nummer geverifieerd: ${number}. Debug modus actief, scannen gaat door voor debug-beelden.`);
+                }
+                
+                setTimeout(() => {
+                  setIsPaused(false);
                   setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
                   processingTimeRef.current = null; // Reset processing time reference
                   setScanFeedback('Scannen hervat...');
@@ -1178,40 +1205,40 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                       setScanFeedback('Camera scant nu...');
                     }
                   }, 1000);
-            }, 2000);
-          } else {
-            // Getallen komen niet overeen, reset en probeer opnieuw
-            setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
+                }, 2000);
+              } else {
+                // Getallen komen niet overeen, reset en probeer opnieuw
+                setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
+                setVerificationInProgress(false);
+                setLastDetectedNumber(null);
                 setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
                 processingTimeRef.current = null; // Reset processing time reference
-          }
-        } else {
-          // Start verificatieproces
-          setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
-          setLastDetectedNumber(number);
-          setVerificationInProgress(true);
-          
-          // Onmiddellijk nog een keer scannen voor verificatie
-          setTimeout(() => {
-            setIsProcessing(false); // Reset processing flag voor de tweede scan
+              }
+            } else {
+              // Start verificatieproces
+              setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
+              setLastDetectedNumber(number);
+              setVerificationInProgress(true);
+              
+              // Onmiddellijk nog een keer scannen voor verificatie
+              setTimeout(() => {
+                setIsProcessing(false); // Reset processing flag voor de tweede scan
                 processingTimeRef.current = null; // Reset processing time reference
-            captureImage(); // Roep zichzelf opnieuw aan voor verificatie
-          }, 300); // Kleine vertraging om een andere frame te krijgen
-        }
-      } else {
-        // Geen getallen gedetecteerd
-        if (verificationInProgress) {
-          setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
-          setVerificationInProgress(false);
-          setLastDetectedNumber(null);
+                captureImage(); // Roep zichzelf opnieuw aan voor verificatie
+              }, 300); // Kleine vertraging om een andere frame te krijgen
+            }
+          } else {
+            // Geen getallen gedetecteerd
+            if (verificationInProgress) {
+              setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
               setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
               processingTimeRef.current = null; // Reset processing time reference
-        } else {
-          setDetectedNumber('');
-          setIsValidNumber(null);
-          setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+            } else {
+              setDetectedNumber('');
+              setIsValidNumber(null);
+              setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
               setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
               processingTimeRef.current = null; // Reset processing time reference
             }
@@ -1221,12 +1248,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           setScanFeedback('OCR-fout opgetreden. Probeer opnieuw...');
           setIsProcessing(false);
           processingTimeRef.current = null; // Reset processing time reference
-      }
-    } else {
-      setIsProcessing(false);
+        }
+      } else {
+        setIsProcessing(false);
         processingTimeRef.current = null; // Reset processing time reference
-      setScanFeedback('Camera niet beschikbaar');
-    }
+        setScanFeedback('Camera niet beschikbaar');
+      }
     } catch (error) {
       console.error('Fout tijdens scannen:', error);
       setScanFeedback('Fout tijdens scannen. Probeer opnieuw...');
@@ -1234,7 +1261,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       processingTimeRef.current = null; // Reset processing time reference
     } finally {
       // Annuleer de veiligheidstimer omdat we klaar zijn (succesvol of met fout)
-      clearTimeout(processingTimeout);
+      if (processingTimeout) {
+        clearTimeout(processingTimeout);
+      }
     }
   }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, preprocessImage, scanFrame.width, scanFrame.height, scanFrame.pixelDensity, validateNumber]);
 
@@ -1249,6 +1278,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           </div>
         )}
         
+        {/* Altijd het camerabeeld tonen */}
         <div className={`relative mb-2 rounded-lg overflow-hidden ${getCameraContainerClass()}`}>
           {/* Camera video met zoom */}
           <video
@@ -1292,55 +1322,25 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   </svg>
                 </button>
               )}
+              
+              {/* Debug knop */}
+              <button
+                onClick={() => setShowDebug(!showDebug)}
+                className={`p-2 rounded-full w-10 h-10 flex items-center justify-center ${showDebug ? 'bg-blue-500 text-white' : 'bg-black bg-opacity-50 text-white'}`}
+                title={`Debug modus ${showDebug ? 'uit' : 'aan'} zetten`}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                </svg>
+              </button>
             </div>
           )}
           
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
-          {/* Debug weergave als het is ingeschakeld */}
-          {showDebug && (
-            <div className="absolute top-2 right-2 p-1 bg-gray-200 rounded shadow-md" style={{ width: '320px', height: '120px', zIndex: 9999 }}>
-              {console.log("Debug rendering - origineel:", debugImage ? `beschikbaar (${debugImage.substring(0, 30)}...)` : "niet beschikbaar", 
-                          "verwerkt:", debugProcessedImage ? `beschikbaar (${debugProcessedImage.substring(0, 30)}...)` : "niet beschikbaar")}
-              <div className="flex w-full h-full">
-                {/* Originele afbeelding */}
-                <div className="w-1/2 h-full p-0.5">
-                  <div className="text-center text-xs text-gray-600 mb-0.5">Origineel</div>
-                  <div className="w-full h-[90px] bg-white flex items-center justify-center">
-                    {debugImage ? (
-                      <img 
-                        src={debugImage} 
-                        alt="Origineel" 
-                        style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                      />
-                    ) : (
-                      <span className="text-xs text-gray-600">Wacht...</span>
-                    )}
-                  </div>
-                </div>
-                
-                {/* Verwerkte afbeelding */}
-                <div className="w-1/2 h-full p-0.5 border-l border-gray-300">
-                  <div className="text-center text-xs text-gray-600 mb-0.5">Verwerkt</div>
-                  <div className="w-full h-[90px] bg-white flex items-center justify-center">
-                    {debugProcessedImage ? (
-                      <img 
-                        src={debugProcessedImage} 
-                        alt="Verwerkt" 
-                        style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
-                      />
-                    ) : (
-                      <span className="text-xs text-gray-600">Wacht...</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        
           {/* Scan-kader overlay met duidelijkere instructies */}
-        {isStreaming && (
+          {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
               <div 
                 className="border-4 rounded-md bg-transparent relative"
@@ -1353,12 +1353,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 {/* Horizontale scanline animatie */}
                 <div 
                   className="absolute left-0 right-0 h-0.5 bg-blue-500 z-10"
-                style={{
+                  style={{
                     top: `${(isPaused ? 50 : (Math.sin(Date.now() / 600) * 0.5 + 0.5) * 100)}%`,
                     boxShadow: '0 0 8px rgba(59, 130, 246, 0.8)',
                     transition: isPaused ? 'none' : 'top 0.3s ease-out'
-                }}
-              ></div>
+                  }}
+                ></div>
               </div>
             </div>
           )}
@@ -1367,9 +1367,123 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           {scanFeedback && (
             <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-70 text-white p-2 rounded-md text-sm text-center">
               {scanFeedback}
+            </div>
+          )}
+        </div>
+        
+        {/* Debug weergave (alleen getoond wanneer ingeschakeld) */}
+        {showDebug && (
+          <div className="debug-container border-2 border-blue-500 rounded-lg mb-4 p-2 bg-white">
+            <div className="flex flex-col">
+              <div className="mb-2">
+                <div className="text-center text-sm font-bold mb-1">Originele afbeelding</div>
+                <div className="h-[150px] border border-gray-300 flex items-center justify-center bg-gray-100">
+                  {debugImage ? (
+                    <img 
+                      src={debugImage} 
+                      alt="Origineel beeld" 
+                      style={{maxHeight: '140px'}}
+                    />
+                  ) : (
+                    <div className="text-gray-500">Geen beeld beschikbaar</div>
+                  )}
+                </div>
+              </div>
+              
+              <div>
+                <div className="text-center text-sm font-bold mb-1">Verwerkte afbeelding</div>
+                <div className="h-[150px] border border-gray-300 flex items-center justify-center bg-gray-100">
+                  {debugProcessedImage ? (
+                    <img 
+                      src={debugProcessedImage} 
+                      alt="Verwerkt beeld" 
+                      style={{maxHeight: '140px'}}
+                    />
+                  ) : (
+                    <div className="text-gray-500">Geen beeld beschikbaar</div>
+                  )}
+                </div>
+              </div>
+            </div>
+            
+            <div className="mt-2 flex justify-between">
+              <div>
+                <button
+                  onClick={() => {
+                    console.log("Test-afbeelding maken...");
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 200;
+                    canvas.height = 100;
+                    const ctx = canvas.getContext('2d');
+                    ctx.fillStyle = 'lightblue';
+                    ctx.fillRect(0, 0, 200, 100);
+                    ctx.fillStyle = 'black';
+                    ctx.font = '20px Arial';
+                    ctx.fillText('Test afbeelding', 40, 50);
+                    const testImage = canvas.toDataURL('image/png');
+                    console.log("Test afbeelding gemaakt:", testImage.substring(0, 30) + "...");
+                    setDebugImage(testImage);
+                    
+                    // Maak ook een verwerkte test afbeelding
+                    const processedCanvas = document.createElement('canvas');
+                    processedCanvas.width = 200;
+                    processedCanvas.height = 100;
+                    const processedCtx = processedCanvas.getContext('2d');
+                    processedCtx.fillStyle = 'lightgreen';
+                    processedCtx.fillRect(0, 0, 200, 100);
+                    processedCtx.fillStyle = 'black';
+                    processedCtx.font = '20px Arial';
+                    processedCtx.fillText('Verwerkt beeld', 40, 50);
+                    const processedImage = processedCanvas.toDataURL('image/png');
+                    setDebugProcessedImage(processedImage);
+                  }}
+                  className="px-2 py-1 bg-blue-500 text-white rounded mr-2"
+                >
+                  Genereer test-beeld
+                </button>
+                
+                {/* Knop om automatisch scannen te pauzeren/hervatten */}
+                {intervalRef.current ? (
+                  <button 
+                    onClick={() => {
+                      stopAutoScan();
+                      setScanFeedback('Automatisch scannen gepauzeerd in debug modus');
+                    }} 
+                    className="px-2 py-1 bg-orange-500 text-white rounded"
+                  >
+                    Pauzeer auto-scan
+                  </button>
+                ) : (
+                  <button 
+                    onClick={() => {
+                      startAutoScan();
+                      setScanFeedback('Automatisch scannen gestart in debug modus');
+                    }} 
+                    className="px-2 py-1 bg-green-500 text-white rounded"
+                  >
+                    Start auto-scan
+                  </button>
+                )}
+              </div>
+              <div>
+                <button
+                  onClick={() => {
+                    // Force een camera capture, zelfs als we in verwerking zijn
+                    // Dit is speciaal voor debug modus
+                    setIsProcessing(false);
+                    processingTimeRef.current = null;
+                    setTimeout(() => {
+                      captureImage();
+                    }, 50);
+                  }}
+                  className="px-2 py-1 bg-green-500 text-white rounded"
+                >
+                  Handmatig scannen
+                </button>
+              </div>
+            </div>
           </div>
         )}
-        </div>
         
         {/* UI voor geavanceerde instellingen */}
         {advancedOcrVisible && (
