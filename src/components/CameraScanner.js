@@ -26,7 +26,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [debugProcessedImage, setDebugProcessedImage] = useState(null);
   const [useImageProcessing, setUseImageProcessing] = useState(true);
   const [ocrQuality, setOcrQuality] = useState('accurate');
-  const [ocrEngine, setOcrEngine] = useState('tesseract'); // 'tesseract' of 'gocr'
+  const [ocrEngine, setOcrEngine] = useState('tesseract'); // 'tesseract', 'gocr' of 'chatgpt'
   const [advancedOcrVisible, setAdvancedOcrVisible] = useState(false);
   const [cameraFacing, setCameraFacing] = useState('environment'); // 'environment' (achter) of 'user' (voor)
   const [torchEnabled, setTorchEnabled] = useState(false); // flitser aan/uit
@@ -736,10 +736,17 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       console.log('Camera is actief, automatisch scannen wordt gestart...');
       // Debug status tonen
       console.log('Debug modus:', showDebug ? 'AAN' : 'UIT');
-      // Start het scannen met een korte vertraging om de camera tijd te geven om op te starten
-      setTimeout(() => {
-        startAutoScan();
-      }, 500);
+      // Niet automatisch scannen als ChatGPT OCR is geselecteerd
+      if (ocrEngine === 'chatgpt') {
+        console.log('ChatGPT OCR geselecteerd, automatisch scannen overgeslagen - gebruik de knop om een foto te maken');
+        setScanFeedback('Klik op de "Scan met ChatGPT" knop om een foto te maken en te analyseren');
+        stopAutoScan();
+      } else {
+        // Start het scannen met een korte vertraging om de camera tijd te geven om op te starten
+        setTimeout(() => {
+          startAutoScan();
+        }, 500);
+      }
     } else {
       console.log('Camera is niet actief of in handmatige modus, scannen wordt gestopt...');
       stopAutoScan();
@@ -749,7 +756,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       // Altijd stoppen bij unmount of verandering in afhankelijkheden
       stopAutoScan();
     };
-  }, [isStreaming, isManualMode]);
+  }, [isStreaming, isManualMode, ocrEngine, showDebug, startAutoScan, stopAutoScan, setScanFeedback]);
 
   // Functie om OCR parameters te updaten op basis van kwaliteit - ALLEEN voor initiële setup
   const updateOcrParameters = async () => {
@@ -1706,6 +1713,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         // GOCR verwerking
         console.log("Verwerken met GOCR engine");
         data = await processWithGOCR(imageSource);
+      } else if (ocrEngine === 'chatgpt') {
+        // ChatGPT verwerking
+        console.log("Verwerken met ChatGPT engine");
+        data = await processWithChatGPT(imageSource);
       } else {
         // Standaard Tesseract verwerking
         console.log("Verwerken met Tesseract engine");
@@ -1951,6 +1962,22 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             </div>
           )}
           
+          {/* ChatGPT OCR scan knop - alleen zichtbaar als die engine is geselecteerd */}
+          {isStreaming && ocrEngine === 'chatgpt' && (
+            <div className="absolute bottom-16 left-0 right-0 flex justify-center">
+              <button
+                onClick={captureImageForChatGPT}
+                disabled={isProcessing}
+                className={`
+                  px-4 py-3 rounded-lg text-white font-bold shadow-lg
+                  ${isProcessing ? 'bg-gray-500' : 'bg-blue-600 animate-pulse'}
+                `}
+              >
+                {isProcessing ? 'Bezig met verwerken...' : 'Scan met ChatGPT Vision'}
+              </button>
+            </div>
+          )}
+          
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
@@ -1991,6 +2018,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 `⚠️ DIRECT NAAR ${ocrEngine.toUpperCase()}: ${scanFeedback}` : 
                 ocrEngine === 'gocr' && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ?
                 `[GOCR] ${scanFeedback}` :
+                ocrEngine === 'chatgpt' && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ?
+                `[ChatGPT] ${scanFeedback}` :
                 scanFeedback}
             </div>
           )}
@@ -2140,11 +2169,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   >
                     GOCR
                   </button>
+                  <button 
+                    onClick={() => setOcrEngine('chatgpt')}
+                    className={`px-2 py-1 text-xs rounded flex-1 ${ocrEngine === 'chatgpt' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                  >
+                    ChatGPT
+                  </button>
                 </div>
                 <div className="text-xs text-gray-300 mb-2">
                   {ocrEngine === 'tesseract' ? 
                     'Tesseract: Nauwkeurige OCR-engine met taalmodellen.' : 
-                    'GOCR: Alternatieve OCR-engine, soms beter voor eenvoudige cijfers.'}
+                    ocrEngine === 'gocr' ?
+                    'GOCR: Alternatieve OCR-engine, soms beter voor eenvoudige cijfers.' :
+                    'ChatGPT: Gebruikt AI om cijfers te herkennen via de OpenAI API.'}
                 </div>
               </div>
               
@@ -2940,6 +2977,274 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         </div>
       </div>
     );
+  };
+
+  // Na de simulateGOCRRecognition functie, voor de getCameraContainerClass functie
+  
+  // ChatGPT-verwerking voor tekstherkenning
+  const processWithChatGPT = async (imageSource) => {
+    try {
+      console.log("ChatGPT-verwerking gestart");
+      setScanFeedback("Bezig met verzenden naar ChatGPT...");
+      
+      // Voorbewerk de afbeelding naar 512x512 pixels
+      const resizedImage = await resizeImageTo512(imageSource);
+      
+      // API-aanroep via server-route om de API-sleutel te beschermen
+      try {
+        const response = await fetch('/api/chatgpt-ocr', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ imageBase64: resizedImage })
+        });
+        
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(`API fout: ${errorData.message || response.statusText}`);
+        }
+        
+        // Verwerk het antwoord
+        const data = await response.json();
+        const extractedText = data.text.trim();
+        console.log("ChatGPT antwoord:", extractedText);
+        
+        // Controleer of het antwoord een 4-cijferig getal is
+        const numberMatch = extractedText.match(/\d{4}/);
+        const result = numberMatch ? numberMatch[0] : "";
+        
+        // Bereken een fictieve confidence score
+        const confidence = result.length === 4 ? 0.95 : 0.1;
+        
+        return {
+          text: result,
+          confidence: confidence
+        };
+      } catch (error) {
+        console.error("ChatGPT API-aanroep mislukt:", error);
+        setScanFeedback(`ChatGPT OCR mislukt: ${error.message}`);
+        
+        // Fallback naar eenvoudige tekst
+        return {
+          text: "",
+          confidence: 0
+        };
+      }
+    } catch (error) {
+      console.error("ChatGPT-verwerking mislukt:", error);
+      setScanFeedback(`ChatGPT OCR mislukt: ${error.message}`);
+      
+      // Fallback naar eenvoudige tekst
+      return {
+        text: "",
+        confidence: 0
+      };
+    }
+  };
+  
+  // Hulpfunctie om afbeelding te converteren naar 512x512 pixels
+  const resizeImageTo512 = (imageSource) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        // Maak een canvas van 512x512
+        const canvas = document.createElement('canvas');
+        canvas.width = 512;
+        canvas.height = 512;
+        const ctx = canvas.getContext('2d');
+        
+        // Vul met witte achtergrond
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, 512, 512);
+        
+        // Bereken afmetingen behoudend de beeldverhouding
+        let newWidth, newHeight;
+        if (img.width > img.height) {
+          newWidth = 512;
+          newHeight = (img.height / img.width) * 512;
+        } else {
+          newHeight = 512;
+          newWidth = (img.width / img.height) * 512;
+        }
+        
+        // Centreer de afbeelding
+        const x = (512 - newWidth) / 2;
+        const y = (512 - newHeight) / 2;
+        
+        // Teken de afbeelding
+        ctx.drawImage(img, x, y, newWidth, newHeight);
+        
+        // Converteer naar base64
+        const resizedBase64 = canvas.toDataURL('image/jpeg', 0.9);
+        resolve(resizedBase64);
+      };
+      
+      img.src = imageSource;
+    });
+  };
+
+  // Voeg eerst een check toe in het useEffect om automatisch scannen alleen te starten als ChatGPT OCR niet geselecteerd is
+  // Zoek het useEffect dat startAutoScan aanroept
+  useEffect(() => {
+    if (isStreaming && !isManualMode) {
+      console.log('Camera is actief, automatisch scannen wordt gestart...');
+      // Debug status tonen
+      console.log('Debug modus:', showDebug ? 'AAN' : 'UIT');
+      // Niet automatisch scannen als ChatGPT OCR is geselecteerd
+      if (ocrEngine === 'chatgpt') {
+        console.log('ChatGPT OCR geselecteerd, automatisch scannen overgeslagen - gebruik de knop om een foto te maken');
+        setScanFeedback('Klik op de "Scan met ChatGPT" knop om een foto te maken en te analyseren');
+        stopAutoScan();
+      } else {
+        // Start het scannen met een korte vertraging om de camera tijd te geven om op te starten
+        setTimeout(() => {
+          startAutoScan();
+        }, 500);
+      }
+    } else {
+      console.log('Camera is niet actief of in handmatige modus, scannen wordt gestopt...');
+      stopAutoScan();
+    }
+    
+    return () => {
+      // Altijd stoppen bij unmount of verandering in afhankelijkheden
+      stopAutoScan();
+    };
+  }, [isStreaming, isManualMode, ocrEngine]);
+
+  // Voeg een functie toe voor het expliciet maken van een foto voor ChatGPT
+  // Plaats deze functie na de captureImage functie
+  const captureImageForChatGPT = async () => {
+    // Voorkom dubbele verwerking als er al een proces bezig is
+    if (isProcessing || !isStreaming) return;
+    
+    setScanFeedback('ChatGPT foto maken en verzenden...');
+    setIsProcessing(true);
+    
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      
+      if (video && canvas) {
+        const context = canvas.getContext('2d', { willReadFrequently: true });
+        
+        // Pas canvas grootte aan voor optimale OCR met hogere pixeldichtheid
+        canvas.width = scanFrame.width * scanFrame.pixelDensity;
+        canvas.height = scanFrame.height * scanFrame.pixelDensity;
+        
+        // Bepaal de werkelijke afmetingen van het videoframe
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        
+        // Bereken het middelpunt van de video
+        const centerX = videoWidth / 2;
+        const centerY = videoHeight / 2;
+        
+        // Bereken uitsnijdafmetingen
+        const cropWidth = scanFrame.width / cropZoomLevel;
+        const cropHeight = scanFrame.height / cropZoomLevel;
+        
+        // Bereken de coördinaten voor het uitsnijden vanuit het midden
+        const frameX = centerX - (cropWidth / 2);
+        const frameY = centerY - (cropHeight / 2);
+        
+        // Trek alleen het gedeelte binnen het kader op de canvas
+        context.drawImage(
+          video,
+          frameX, frameY,
+          cropWidth, cropHeight,
+          0, 0,
+          canvas.width, canvas.height
+        );
+        
+        // Maak een kopie van originele afbeelding voor debug
+        if (showDebug) {
+          try {
+            const originalUrl = canvas.toDataURL('image/png');
+            setDebugImage("" + originalUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan originele debug afbeelding:", e);
+          }
+        }
+        
+        // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
+        let processedCanvas = canvas;
+        if (!skipPreprocessing) {
+          processedCanvas = preprocessImage(canvas);
+        } else if (showDebug) {
+          try {
+            const originalUrl = canvas.toDataURL('image/png');
+            setDebugProcessedImage("" + originalUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan van onbewerkte afbeelding voor debug:", e);
+          }
+        }
+        
+        // Maak een kopie van het geoptimaliseerde beeld voor debug
+        if (showDebug) {
+          try {
+            const processedUrl = processedCanvas.toDataURL('image/png');
+            setDebugProcessedImage("" + processedUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan verwerkte debug afbeelding:", e);
+          }
+        }
+        
+        // Verkrijg afbeelding voor ChatGPT verwerking
+        const imageSource = processedCanvas.toDataURL('image/png');
+        
+        // Verwerk de afbeelding met ChatGPT
+        setScanFeedback('Bezig met verwerken via ChatGPT Vision...');
+        const data = await processWithChatGPT(imageSource);
+        
+        // Verwerk het OCR resultaat
+        const text = data.text.trim();
+        console.log("ChatGPT OCR tekst:", text);
+        console.log("ChatGPT OCR confidence:", data.confidence);
+        
+        if (text) {
+          // Valideer het gedetecteerde nummer
+          const isValid = validateNumber(text, duckNumbers);
+          setDetectedNumber(text);
+          setIsValidNumber(isValid);
+          
+          // Feedback over het resultaat
+          const feedbackText = isValid 
+            ? `✓ GELDIG: ${text} komt voor in de lijst!` 
+            : `✗ ONGELDIG: ${text} komt NIET voor in de lijst!`;
+          setScanFeedback(feedbackText);
+          
+          // Notificeer parent component
+          if (onNumberDetected) {
+            onNumberDetected(text, isValid);
+          }
+          
+          // Pauzeer even voor gebruiker om resultaat te zien
+          setIsPaused(true);
+          setTimeout(() => {
+            setIsPaused(false);
+            setIsProcessing(false);
+            if (isStreaming) {
+              setScanFeedback('Klik op de "Scan met ChatGPT" knop om opnieuw te scannen');
+            }
+          }, 5000);
+        } else {
+          // Geen tekst gevonden
+          setDetectedNumber('');
+          setIsValidNumber(null);
+          setScanFeedback('Geen cijfers gedetecteerd. Probeer opnieuw.');
+          setIsProcessing(false);
+        }
+      } else {
+        setScanFeedback('Camera niet beschikbaar');
+        setIsProcessing(false);
+      }
+    } catch (error) {
+      console.error('Fout tijdens ChatGPT scannen:', error);
+      setScanFeedback(`Fout tijdens ChatGPT scannen: ${error.message}`);
+      setIsProcessing(false);
+    }
   };
 
   return (
