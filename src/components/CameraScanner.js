@@ -15,6 +15,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [scanFeedback, setScanFeedback] = useState('');
   const workerRef = useRef(null);
   const intervalRef = useRef(null);
+  const processingTimeRef = useRef(null); // Tijdstip waarop de verwerking is gestart
   const [isPaused, setIsPaused] = useState(false);
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
@@ -30,6 +31,29 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [hasTorch, setHasTorch] = useState(false); // Of het apparaat een flitser heeft
   const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
   const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
+  const [extraProcessingOptions, setExtraProcessingOptions] = useState({
+    contrastLevel: 1.5,       // Contrastniveau (1.0 = normaal, 2.0 = hoog contrast)
+    brightnessAdjust: 10,     // Helderheidsaanpassing (-50 tot 50)
+    gammaCorrection: 1.0,     // Gamma correctie (1.0 = normaal, <1 donkerder, >1 lichter)
+    invertColors: false,      // Kleuren inverteren
+    rotationAngle: 0,         // Rotatie in graden
+    applySharpening: true,    // Verscherping toepassen
+    denoisingStrength: 3,     // Ruisonderdrukking (0-10)
+    dilationSize: 2,          // Dikte van de cijfers (1-5)
+    autoCorrectSkew: false,   // Automatische scheefstandcorrectie
+    edgeEnhancement: false,   // Extra randverbetering
+  });
+  const [cameraSettings, setCameraSettings] = useState({
+    exposureMode: 'auto',     // 'auto', 'manual'
+    exposureCompensation: 0,  // -3 tot +3
+    focusMode: 'continuous',  // 'continuous', 'manual', 'fixed'
+    whiteBalance: 'auto',     // 'auto', 'cloudy', 'sunny', 'fluorescent'
+    colorTemperature: 'auto', // 'auto' of specifieke waarde
+    iso: 'auto',              // 'auto' of specifieke waarde
+    captureMode: 'normal',    // 'normal', 'hdr', 'lowlight'
+  });
+  const [showAdvancedCamera, setShowAdvancedCamera] = useState(false);
+  const [showAdvancedProcessing, setShowAdvancedProcessing] = useState(false);
   const [ocrSettings, setOcrSettings] = useState({
     // Segmentatie mode
     pagesegMode: 6, // 6 = blok tekst, 7 = één regel
@@ -52,492 +76,70 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     maxSlope: 0.414,
     minXheight: 8,
     maxOutlineChildren: 40,
+    // Verbeterde parameter voor cijferherkenning
+    dignormNormalizeMode: 8, // Speciale normalisatie voor cijfers
+    dignormAdjNonSpace: true, // Betere afstandsbepaling tussen cijfers
+    dignormQuadMoments: true, // Verbeterde patroonherkenning voor cijfers
   });
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
     width: 180,  // Breedte van het kader in pixels (iets breder voor meer context)
     height: 70, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
+    // Pixeldichtheid voor betere kwaliteit (hoger = meer detail in dezelfde afmeting)
+    pixelDensity: 2.0, // Verdubbel de pixeldichtheid voor betere kwaliteit
   };
 
-  // Initialiseer de Tesseract worker en OpenCV
-  useEffect(() => {
-    const initWorker = async () => {
-      workerRef.current = await createWorker('eng');
-      // Roep de updateOcrParameters aan in plaats van directe parameters
-      await updateOcrParameters();
-    };
-
-    // OpenCV initialisatie
-    const initOpenCV = async () => {
-      if (typeof cv !== 'undefined' && cv.getBuildInformation) {
-        // OpenCV is al geladen
-        setOpenCvLoaded(true);
-        console.log('OpenCV is al geladen');
-      } else {
-        // Wacht tot OpenCV geladen is
-        console.log('Wachten tot OpenCV geladen is...');
-        if (cv.onRuntimeInitialized) {
-          cv.onRuntimeInitialized = () => {
-            setOpenCvLoaded(true);
-            console.log('OpenCV is succesvol geïnitialiseerd');
-          };
-        } else {
-          // Als de callback eigenschap niet bestaat, controleer periodiek
-          const checkInterval = setInterval(() => {
-            if (typeof cv !== 'undefined' && cv.getBuildInformation) {
-              clearInterval(checkInterval);
-              setOpenCvLoaded(true);
-              console.log('OpenCV is succesvol geïnitialiseerd');
-            }
-          }, 500);
-          
-          // Stop controle na 10 seconden als het niet lukt
-          setTimeout(() => {
-            clearInterval(checkInterval);
-            if (!openCvLoaded) {
-              console.warn('OpenCV kon niet geladen worden binnen 10 seconden');
-            }
-          }, 10000);
-        }
-      }
-    };
-
-    initWorker();
-    initOpenCV();
-
-    return () => {
-      if (workerRef.current) {
-        workerRef.current.terminate();
-      }
-    };
-  }, [ocrQuality]);
-
-  // Functie om OCR parameters te updaten op basis van kwaliteit - ALLEEN voor initiële setup
-  const updateOcrParameters = async () => {
-    if (!workerRef.current) return;
+  // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
+  const validateNumber = (detected, validNumbers) => {
+    if (!detected || !validNumbers || !validNumbers.length) return false;
     
-    // Deze functie wordt alleen gebruikt voor de initiële setup
-    // Voor latere updates gebruiken we updateOcrSetting en de kwaliteitsknoppen
+    // Converteer het gedetecteerde nummer naar een string en verwijder whitespace
+    const cleanDetected = detected.toString().trim();
     
-    // Nieuwe instellingen op basis van de gekozen kwaliteit
-    let newSettings = { ...ocrSettings };
+    // Debug logging
+    console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
+    console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
     
-    // We voegen alleen de standaardinstellingen toe voor de gekozen kwaliteit
-    // zonder bestaande aangepaste instellingen te overschrijven, behalve bij initialisatie
-    switch (ocrQuality) {
-      case 'fast':
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 7,           // Eén regel tekst
-          engineMode: 3,            // Alleen LSTM (sneller)
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 1,         // Snelle modus
-          lstmIterations: 10,
-          goodQualityRating: 0.95,
-        };
-        break;
-        
-      case 'accurate':
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 6,           // Blok tekst (nauwkeuriger voor getallen)
-          engineMode: 2,            // LSTM (nauwkeuriger)
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 2,         // Betere kwaliteit
-          lstmIterations: 15,
-          oldXheight: false,
-          forcePropWords: false,
-          doInvert: false,
-          goodQualityRating: 0.98,
-          minSlope: 0.414,
-          maxSlope: 0.414, 
-          minXheight: 8,
-          maxOutlineChildren: 40,
-        };
-        break;
-        
-      default: // 'balanced'
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 7,
-          engineMode: 2,
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 1,
-          lstmIterations: 12,
-          doInvert: false,
-          goodQualityRating: 0.96,
-        };
-    }
+    // Zorg dat we het exacte pad cijfers hebben - pad met nullen indien nodig
+    const paddedDetected = cleanDetected.padStart(4, '0');
     
-    // Update state met de nieuwe instellingen
-    setOcrSettings(newSettings);
+    // Check of het nummer in de lijst voorkomt (string vergelijking)
+    // Probeer zowel met als zonder padding voor het geval dat
+    const isValid = validNumbers.includes(paddedDetected) || validNumbers.includes(cleanDetected);
     
-    // Pas de nieuwe instellingen toe
-    await applyCustomOcrParameters(newSettings);
+    console.log(`Zoeken naar: "${paddedDetected}" of "${cleanDetected}"`);
+    console.log(`In lijst: ${isValid}`);
+    
+    return isValid;
   };
 
-  // Verbeterde afbeeldingsverwerking met OpenCV
-  const preprocessImage = (canvas) => {
-    if (!useImageProcessing) return canvas; // Skip als beeldverwerking uit staat
-    
-    try {
-      // Alleen OpenCV gebruiken als het geladen is
-      if (openCvLoaded) {
-        // Canvas naar OpenCV Mat converteren
-        const ctx = canvas.getContext('2d');
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const src = cv.matFromImageData(imageData);
-        
-        // Doelmat aanmaken met dezelfde grootte en type
-        const dst = new cv.Mat();
-        
-        // Grayscale conversie
-        cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
-        
-        // Gaussian blur om ruis te verminderen
-        const ksize = new cv.Size(5, 5);
-        cv.GaussianBlur(dst, dst, ksize, 0);
-        
-        // Verschillende verwerkingstechnieken op basis van gebruikersselectie
-        switch (processingTechnique) {
-          case 'adaptive':
-            // Adaptieve threshold voor betere tekst-extractie
-            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-            break;
-          case 'binary':
-            // Eenvoudige binaire threshold
-            cv.threshold(dst, dst, 127, 255, cv.THRESH_BINARY);
-            break;
-          case 'canny':
-            // Canny edge detection voor contouren
-            cv.Canny(dst, dst, 50, 150);
-            break;
-          default:
-            // Standaard adaptieve threshold
-            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
-        }
-        
-        // Morphologische operatie (opening) om kleine ruis te verwijderen
-        const M = cv.Mat.ones(3, 3, cv.CV_8U);
-        const anchor = new cv.Point(-1, -1);
-        cv.morphologyEx(dst, dst, cv.MORPH_OPEN, M, anchor, 1);
-        
-        // Terug converteren naar canvas
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
-        cv.imshow(tempCanvas, dst);
-        
-        // Terug naar originele canvas kopiëren
-        ctx.drawImage(tempCanvas, 0, 0);
-        
-        // Debug afbeelding weergeven indien nodig
-        if (showDebug) {
-          setDebugImage(tempCanvas.toDataURL());
-        }
-        
-        // Geheugen vrijgeven
-        src.delete();
-        dst.delete();
-        M.delete();
-        
-        if (debugImage && showDebug) {
-          // Voor debug doeleinden laten we de originele canvas ongewijzigd
-          return canvas;
-        }
-        
-        return canvas;
-      } else {
-        // Terugvallen op de originele beeldverwerking als OpenCV niet geladen is
-        console.log('OpenCV niet geladen, terugvallen op standaard beeldverwerking');
-        return fallbackImageProcessing(canvas);
-      }
-    } catch (error) {
-      console.error('OpenCV verwerking mislukt:', error);
-      // Terugvallen op de originele beeldverwerking als OpenCV faalt
-      return fallbackImageProcessing(canvas);
-    }
-  };
-  
-  // Fallback beeldverwerking functie zonder OpenCV
-  const fallbackImageProcessing = (canvas) => {
-    const ctx = canvas.getContext('2d');
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const data = imageData.data;
-    
-    // Bereken gemiddelde helderheid om adaptieve threshold te bepalen
-    let totalBrightness = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      totalBrightness += gray;
-    }
-    const avgBrightness = totalBrightness / (data.length / 4);
-    
-    // Bepaal een dynamische threshold op basis van de helderheid
-    const threshold = avgBrightness > 128 ? 140 : 120;
-    
-    // VERBETERDE BEELDVERWERKING VOOR BREDER KADER
-    // Bij bredere afbeeldingen moet je meer letten op contrast
-    const factor = 3.0; // Hoger contrast voor betere cijferherkenning
-    const intercept = 128 * (1 - factor);
-    
-    for (let i = 0; i < data.length; i += 4) {
-      // Grayscale conversie
-      const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      
-      // Contrast aanpassen
-      const adjusted = factor * gray + intercept;
-      
-      // Binaire conversie (zwart-wit) met dynamische drempelwaarde
-      const result = adjusted > threshold ? 255 : 0;
-      
-      // Alle kleurkanalen gelijk maken
-      data[i] = data[i + 1] = data[i + 2] = result;
-    }
-    
-    // Update afbeelding
-    ctx.putImageData(imageData, 0, 0);
-    
-    return canvas;
-  };
-
-  // Neem een snapshot en verwerk het met OCR
-  const captureImage = useCallback(async () => {
-    if (!isStreaming || isProcessing || !workerRef.current) return;
-    
-    setIsProcessing(true);
-    setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
-    
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    if (video && canvas) {
-      const context = canvas.getContext('2d');
-      
-      // Pas canvas grootte aan voor optimale OCR
-      canvas.width = scanFrame.width;
-      canvas.height = scanFrame.height;
-      
-      // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
-      // rekening houdend met zoomniveau
-      
-      // 1. Bepaal de werkelijke afmetingen van het videoframe
-      const videoWidth = video.videoWidth;
-      const videoHeight = video.videoHeight;
-      
-      // 2. Bereken het middelpunt van de video
-      const centerX = videoWidth / 2;
-      const centerY = videoHeight / 2;
-      
-      // 3. Bereken de schaal voor het uitsnijden, rekening houdend met zoom
-      // Dit zorgt dat we precies het juiste gebied uitsnijden dat in het kader zichtbaar is
-      const scaledWidth = scanFrame.width * zoomLevel;
-      const scaledHeight = scanFrame.height * zoomLevel;
-      
-      // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
-      // Dit zorgt dat we het juiste gebied pakken, ongeacht het zoomniveau
-      const frameX = centerX - (scaledWidth / 2);
-      const frameY = centerY - (scaledHeight / 2);
-      
-      // Trek alleen het gedeelte binnen het kader op de canvas
-      context.drawImage(
-        video,                // bron
-        frameX, frameY,       // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
-        scaledWidth, scaledHeight,  // grootte uitsnede, gecorrigeerd voor zoom
-        0, 0,                 // beginpunt op canvas
-        scanFrame.width, scanFrame.height // grootte op canvas (vast)
-      );
-      
-      // Maak een kopie van originele afbeelding voor debug
-      const originalImageData = canvas.toDataURL('image/png');
-      
-      // Update debug weergave direct om te tonen wat er wordt gescand
-      if (showDebug) {
-        setDebugImage(originalImageData);
-      }
-      
-      // Pas beeldverbetering toe
-      preprocessImage(canvas);
-      
-      // Maak een kopie van het geoptimaliseerde beeld
-      const processedImageData = canvas.toDataURL('image/png');
-      
-      console.log("Verwerken van geoptimaliseerde afbeelding...");
-      
-      // DEBUG: Toon beelden in de console (als ontwikkelaar)
-      if (showDebug) {
-        setDebugImage(useImageProcessing ? processedImageData : originalImageData);
-      }
-      
-      // TESSERACT PARAMETERS AANPASSEN
-      // Geoptimaliseerde parameters voor cijferherkenning
-      // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
-      // await updateOcrParameters(); // Verwijderd om handmatige instellingen te behouden
-      
-      const { data } = await workerRef.current.recognize(
-        useImageProcessing ? processedImageData : originalImageData
-      );
-      const text = data.text.trim();
-      
-      // Debug info
-      console.log("OCR tekst:", text);
-      console.log("OCR confidence:", data.confidence);
-      
-      // Verbeterde nummerextractie
-      // Eerst zoeken naar alle getallen in de gedetecteerde tekst
-      const numbersFound = text.match(/\d+/g);
-      console.log("Gevonden getallen:", numbersFound);
-      
-      if (numbersFound && numbersFound.length > 0) {
-        // Filter en pad getallen zodat ze exact 4 cijfers hebben
-        const filteredNumbers = numbersFound.map(num => {
-          if (num.length > 4) {
-            // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
-            return num.slice(-4);
-          } else if (num.length < 4) {
-            // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
-            return num.padStart(4, '0');
-          }
-          return num; // Al 4 cijfers
-        });
-        
-        console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
-        
-        let bestNumber = '';
-        
-        // Zoek naar exacte 4-cijferige getallen (prioriteit)
-        const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
-        if (fourDigitNumbers.length > 0) {
-          bestNumber = fourDigitNumbers[0];
-        } else {
-          // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
-          // neem het langste beschikbare getal
-          let maxLength = 0;
-          for (const num of filteredNumbers) {
-            if (num.length > maxLength) {
-              maxLength = num.length;
-              bestNumber = num;
-            }
-          }
-        }
-        
-        // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
-        const number = bestNumber;
-        
-        // Als we bezig zijn met verificatie
-        if (verificationInProgress && lastDetectedNumber) {
-          if (number === lastDetectedNumber) {
-            // Nummer is geverifieerd, verwerk het nu
-            setDetectedNumber(number);
-            
-            // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
-            const isValid = validateNumber(number, duckNumbers);
-            setIsValidNumber(isValid);
-            
-            setScanFeedback(`Nummer geverifieerd: ${number}`);
-            
-            if (onNumberDetected) {
-              onNumberDetected(number, isValid);
-            }
-            
-            // Reset verificatie status
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
-            
-            // Pauzeer het scannen voor 2 seconden
-            setIsPaused(true);
-            console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
-            setTimeout(() => {
-              setIsPaused(false);
-              setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
-              setScanFeedback('Scannen hervat...');
-              console.log("Scannen hervat na pauze");
-              
-              // Na 1 seconde de scan feedback updaten
-              setTimeout(() => {
-                if (isStreaming) {
-                  setScanFeedback('Camera scant nu...');
-                }
-              }, 1000);
-            }, 2000);
-          } else {
-            // Getallen komen niet overeen, reset en probeer opnieuw
-            setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
-          }
-        } else {
-          // Start verificatieproces
-          setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
-          setLastDetectedNumber(number);
-          setVerificationInProgress(true);
-          
-          // Onmiddellijk nog een keer scannen voor verificatie
-          setTimeout(() => {
-            setIsProcessing(false); // Reset processing flag voor de tweede scan
-            captureImage(); // Roep zichzelf opnieuw aan voor verificatie
-          }, 300); // Kleine vertraging om een andere frame te krijgen
-        }
-      } else {
-        // Geen getallen gedetecteerd
-        if (verificationInProgress) {
-          setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
-          setVerificationInProgress(false);
-          setLastDetectedNumber(null);
-          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
-        } else {
-          setDetectedNumber('');
-          setIsValidNumber(null);
-          setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
-          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
-        }
-      }
+  // Bereken achtergrondkleur voor camera container
+  const getCameraContainerClass = () => {
+    if (!isValidNumber && detectedNumber) {
+      return "border-2 border-red-500 bg-red-100 bg-opacity-30";
+    } else if (isValidNumber) {
+      return "border-2 border-green-500 bg-green-100 bg-opacity-30";
     } else {
-      setIsProcessing(false);
-      setScanFeedback('Camera niet beschikbaar');
+      return "border-2 border-gray-300";
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, ocrQuality]);
+  };
 
-  // Stop automatisch scannen met useCallback
-  const stopAutoScan = useCallback(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-      intervalRef.current = null;
-      setScanFeedback('');
-    }
-  }, []);
-
-  // Start automatisch scannen met useCallback
-  const startAutoScan = useCallback(() => {
-    // Stop eventueel bestaande interval
-    stopAutoScan();
+  // Wijzig het zoomniveau
+  const handleZoomChange = (e) => {
+    const newZoom = parseFloat(e.target.value);
+    setZoomLevel(newZoom);
     
-    // Geef feedback dat scannen is gestart
-    setScanFeedback('Automatisch scannen gestart...');
+    // Update feedback om te laten zien wat er gebeurt
+    setScanFeedback(`Zoom niveau: ${Math.round(newZoom * 100)}%`);
     
-    // Start nieuwe interval
-    intervalRef.current = setInterval(() => {
-      if (!isProcessing && isStreaming && !isPaused) {
-        // Update tekst om te laten zien dat we scannen
-        setScanFeedback('Camera scant nu...');
-        captureImage();
-        console.log("Nieuwe scan gestart - " + new Date().toLocaleTimeString());
-      } else {
-        // Log de status voor debugdoeleinden
-        console.log(`Scan overgeslagen - Status: isProcessing=${isProcessing}, isStreaming=${isStreaming}, isPaused=${isPaused}`);
+    // Reset na korte tijd
+    setTimeout(() => {
+      if (isStreaming) {
+        setScanFeedback('Camera actief, scannen start...');
       }
-    }, 1000); // Elke seconde scannen in plaats van elke 2 seconden
-  }, [stopAutoScan, isProcessing, isStreaming, isPaused, captureImage]);
+    }, 1000);
+  };
 
   // Start de camera
   const startCamera = async () => {
@@ -557,15 +159,52 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       
       // Probeer gewenste camera te starten
       try {
+        // Voeg camera-instellingen toe aan constraints op basis van de instellingen in de state
         const constraints = {
           video: {
             facingMode: { ideal: initialFacingMode },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
+            width: { ideal: 1920 },  // Verhoogd van 1280 naar 1920 voor betere kwaliteit
+            height: { ideal: 1080 }, // Verhoogd van 720 naar 1080 voor betere kwaliteit
+            aspectRatio: { ideal: 1.777778 }, // 16:9 aspect ratio
+            // Probeer hogere framerates indien beschikbaar
+            frameRate: { min: 15, ideal: 30, max: 60 }
           }
         };
         
-        console.log(`Probeert camera te starten met facing mode: ${initialFacingMode}`);
+        // Voeg geavanceerde camera-instellingen toe als deze ondersteund worden
+        const advancedConstraints = [];
+        
+        // Focus mode
+        if (cameraSettings.focusMode !== 'auto') {
+          advancedConstraints.push({ focusMode: cameraSettings.focusMode });
+        }
+        
+        // Exposure compensation
+        if (cameraSettings.exposureCompensation !== 0) {
+          advancedConstraints.push({ exposureCompensation: cameraSettings.exposureCompensation });
+        }
+        
+        // White balance mode
+        if (cameraSettings.whiteBalance !== 'auto') {
+          let colorTemp;
+          switch (cameraSettings.whiteBalance) {
+            case 'cloudy': colorTemp = 6500; break;
+            case 'sunny': colorTemp = 5500; break;
+            case 'fluorescent': colorTemp = 4000; break;
+            default: colorTemp = 5000;
+          }
+          advancedConstraints.push({ 
+            whiteBalanceMode: cameraSettings.whiteBalance === 'auto' ? 'continuous' : 'manual',
+            colorTemperature: colorTemp
+          });
+        }
+        
+        // Voeg de geavanceerde instellingen toe aan de constraints als ze er zijn
+        if (advancedConstraints.length > 0) {
+          constraints.video.advanced = advancedConstraints;
+        }
+        
+        console.log(`Probeert camera te starten met facing mode: ${initialFacingMode} en instellingen:`, constraints);
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         if (videoRef.current) {
@@ -580,11 +219,55 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           // Functionaliteit voor flitser/torch controleren
           if (videoTrack) {
             const capabilities = videoTrack.getCapabilities();
+            console.log('Camera capabilities:', capabilities);
             const hasFlash = capabilities && capabilities.torch;
             
             setHasTorch(hasFlash || false);
             console.log(`Camera heeft flitser: ${hasFlash ? 'JA' : 'NEE'}`);
             setScanFeedback(`${initialFacingMode === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+            
+            // Pas eventuele geavanceerde instellingen toe die beschikbaar zijn maar niet in constraints konden
+            try {
+              // Toegang tot camera-instellingen alleen beschikbaar na initialisatie
+              if (capabilities) {
+                let appliedSettings = [];
+                
+                // Focus mode
+                if (capabilities.focusMode && capabilities.focusMode.includes(cameraSettings.focusMode)) {
+                  await videoTrack.applyConstraints({
+                    advanced: [{ focusMode: cameraSettings.focusMode }]
+                  });
+                  appliedSettings.push(`focus: ${cameraSettings.focusMode}`);
+                }
+                
+                // Exposure compensation
+                if (capabilities.exposureCompensation && 
+                    cameraSettings.exposureCompensation >= capabilities.exposureCompensation.min &&
+                    cameraSettings.exposureCompensation <= capabilities.exposureCompensation.max) {
+                  await videoTrack.applyConstraints({
+                    advanced: [{ exposureCompensation: cameraSettings.exposureCompensation }]
+                  });
+                  appliedSettings.push(`belichting: ${cameraSettings.exposureCompensation}`);
+                }
+                
+                // White balance mode
+                if (capabilities.whiteBalanceMode) {
+                  const mode = cameraSettings.whiteBalance === 'auto' ? 'continuous' : 'manual';
+                  if (capabilities.whiteBalanceMode.includes(mode)) {
+                    await videoTrack.applyConstraints({
+                      advanced: [{ whiteBalanceMode: mode }]
+                    });
+                    appliedSettings.push(`witbalans: ${cameraSettings.whiteBalance}`);
+                  }
+                }
+                
+                if (appliedSettings.length > 0) {
+                  console.log('Toegepaste camera-instellingen:', appliedSettings.join(', '));
+                }
+              }
+            } catch (settingsError) {
+              console.warn('Kon sommige camera-instellingen niet toepassen:', settingsError);
+            }
           } else {
             setHasTorch(false);
           }
@@ -599,8 +282,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           const alternateConstraints = {
             video: {
               facingMode: { ideal: alternateFacing },
-              width: { ideal: 1280 },
-              height: { ideal: 720 }
+              width: { ideal: 1920 },  // Verhoogd van 1280 naar 1920 voor betere kwaliteit
+              height: { ideal: 1080 }, // Verhoogd van 720 naar 1080 voor betere kwaliteit
+              aspectRatio: { ideal: 1.777778 }, // 16:9 aspect ratio
+              frameRate: { min: 15, ideal: 30, max: 60 } // Hogere framerate
             }
           };
           
@@ -727,188 +412,808 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     }
   };
 
-  // Schakel naar handmatige invoermodus
-  const switchToManualMode = () => {
-    stopCamera();
-    setIsManualMode(true);
-    setManualInput('');
-    setDetectedNumber('');
-    setIsValidNumber(null);
-    setScanFeedback('');
+  // Start automatisch scannen met intervallen
+  const startAutoScan = () => {
+    // Annuleer bestaand interval indien aanwezig
+    stopAutoScan();
+    
+    // Start een nieuw interval
+    setScanFeedback('Automatisch scannen gestart...');
+    intervalRef.current = setInterval(() => {
+      if (!isProcessing && !isPaused && isStreaming) {
+        captureImage();
+      }
+    }, 1000); // Scan elke seconde
   };
-
-  // Schakel terug naar camera-modus
-  const switchToCameraMode = () => {
-    setIsManualMode(false);
-    startCamera();
-  };
-
-  // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
-  const validateNumber = (detected, validNumbers) => {
-    if (!detected || !validNumbers || !validNumbers.length) return false;
-    
-    // Converteer het gedetecteerde nummer naar een string en verwijder whitespace
-    const cleanDetected = detected.toString().trim();
-    
-    // Debug logging
-    console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
-    console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
-    
-    // Zorg dat we het exacte pad cijfers hebben - pad met nullen indien nodig
-    const paddedDetected = cleanDetected.padStart(4, '0');
-    
-    // Check of het nummer in de lijst voorkomt (string vergelijking)
-    // Probeer zowel met als zonder padding voor het geval dat
-    const isValid = validNumbers.includes(paddedDetected) || validNumbers.includes(cleanDetected);
-    
-    console.log(`Zoeken naar: "${paddedDetected}" of "${cleanDetected}"`);
-    console.log(`In lijst: ${isValid}`);
-    
-    return isValid;
-  };
-
-  // Voeg cijfer toe aan handmatige invoer
-  const addDigit = (digit) => {
-    // Stop als we al 4 cijfers hebben bereikt
-    if (manualInput.length >= 4) return;
-    
-    const newInput = manualInput + digit;
-    setManualInput(newInput);
-    
-    // Controleer het nummer direct na elke invoer
-    setDetectedNumber(newInput);
-    
-    // Valideer pas wanneer we 4 cijfers hebben of als dit een getal is dat met 0 begint
-    // (dan valideren we ook onmiddellijk bij 1, 2 of 3 cijfers)
-    const isValid = validateNumber(newInput, duckNumbers);
-    setIsValidNumber(isValid);
-    
-    console.log(`Handmatige invoer: "${newInput}", Geldig: ${isValid}`);
-    
-    // Rapporteer ook aan de parent component
-    if (onNumberDetected) {
-      onNumberDetected(newInput, isValid);
+  
+  // Stop automatisch scannen
+  const stopAutoScan = () => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
     }
   };
 
-  // Verwijder laatste cijfer van handmatige invoer
-  const removeLastDigit = () => {
-    if (manualInput.length > 0) {
-      setManualInput(manualInput.slice(0, -1));
-      setDetectedNumber('');
-      setIsValidNumber(null);
-    }
-  };
+  // Initialiseer de Tesseract worker en OpenCV
+  useEffect(() => {
+    const initWorker = async () => {
+      // Basisinstellingen worden direct bij initialisatie doorgegeven
+      const baseParams = {
+        tessedit_char_whitelist: '0123456789',
+        tessjs_create_hocr: '0',
+        tessjs_create_tsv: '0',
+        tessjs_create_box: '0',
+        tessjs_create_unlv: '0',
+        tessjs_create_osd: '0',
+        segment_nonalphabetic_script: '1',
+        textord_space_size_is_variable: '0',
+        // Engine mode en andere parameters die alleen tijdens initialisatie kunnen worden ingesteld
+        tessedit_ocr_engine_mode: ocrQuality === 'fast' ? '3' : '2',
+        // Algemene OCR kwaliteitsinstellingen
+        tessedit_pageseg_mode: ocrQuality === 'accurate' ? '6' : '7',
+      };
+      
+      console.log('Initialiseren van Tesseract worker met parameters:', baseParams);
+      
+      // Worker initialiseren met parameters - zonder logger functie
+      workerRef.current = await createWorker('eng', {
+        langPath: 'https://tessdata.projectnaptha.com/4.0.0',
+        workerOptions: {
+          workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@v2.1.1/dist/worker.min.js',
+        },
+        corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@v2.2.0/tesseract-core.wasm.js',
+        // logger verwijderd omdat functies niet kunnen worden gekloond naar workers
+      });
+      
+      // Parameters instellen
+      await workerRef.current.setParameters(baseParams);
+      
+      // Roep de updateOcrParameters aan voor aanvullende parameters
+      await updateOcrParameters();
+    };
 
-  // Wis handmatige invoer
-  const clearInput = () => {
-    setManualInput('');
-    setDetectedNumber('');
-    setIsValidNumber(null);
-  };
+    // OpenCV initialisatie
+    const initOpenCV = async () => {
+      if (typeof cv !== 'undefined' && cv.getBuildInformation) {
+        // OpenCV is al geladen
+        setOpenCvLoaded(true);
+        console.log('OpenCV is al geladen');
+      } else {
+        // Wacht tot OpenCV geladen is
+        console.log('Wachten tot OpenCV geladen is...');
+        if (cv.onRuntimeInitialized) {
+          cv.onRuntimeInitialized = () => {
+            setOpenCvLoaded(true);
+            console.log('OpenCV is succesvol geïnitialiseerd');
+          };
+        } else {
+          // Als de callback eigenschap niet bestaat, controleer periodiek
+          const checkInterval = setInterval(() => {
+            if (typeof cv !== 'undefined' && cv.getBuildInformation) {
+              clearInterval(checkInterval);
+              setOpenCvLoaded(true);
+              console.log('OpenCV is succesvol geïnitialiseerd');
+            }
+          }, 500);
+          
+          // Stop controle na 10 seconden als het niet lukt
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            if (!openCvLoaded) {
+              console.warn('OpenCV kon niet geladen worden binnen 10 seconden');
+            }
+          }, 10000);
+        }
+      }
+    };
 
-  // Start automatisch scannen wanneer de camera start
+    initWorker();
+    initOpenCV();
+
+    return () => {
+      if (workerRef.current) {
+        workerRef.current.terminate();
+      }
+    };
+  }, [ocrQuality]);
+
+  // Effect om automatisch scannen te starten/stoppen wanneer camera streaming status verandert
   useEffect(() => {
     if (isStreaming && !isManualMode) {
-      startAutoScan();
+      console.log('Camera is actief, automatisch scannen wordt gestart...');
+      // Start het scannen met een korte vertraging om de camera tijd te geven om op te starten
+      setTimeout(() => {
+        startAutoScan();
+      }, 500);
     } else {
+      console.log('Camera is niet actief of in handmatige modus, scannen wordt gestopt...');
       stopAutoScan();
     }
     
     return () => {
+      // Altijd stoppen bij unmount of verandering in afhankelijkheden
       stopAutoScan();
     };
-  }, [isStreaming, isManualMode, startAutoScan, stopAutoScan]);
+  }, [isStreaming, isManualMode]);
 
-  // Render het numeric keypad voor handmatige invoer - gebruik useMemo voor betere prestaties
-  const renderKeypad = useMemo(() => {
-    // Bepaal de juiste achtergrondkleur voor het invoerveld op basis van validatie
-    let inputBgClass = "bg-gray-100"; // Standaard grijze achtergrond
+  // Functie om OCR parameters te updaten op basis van kwaliteit - ALLEEN voor initiële setup
+  const updateOcrParameters = async () => {
+    if (!workerRef.current) return;
     
-    // Als er een invoer is en validatie heeft plaatsgevonden
-    if (manualInput && isValidNumber !== null) {
-      inputBgClass = isValidNumber ? "bg-green-100" : "bg-red-100";
+    // Deze functie wordt alleen gebruikt voor de initiële setup
+    // Voor latere updates gebruiken we updateOcrSetting en de kwaliteitsknoppen
+    
+    // Nieuwe instellingen op basis van de gekozen kwaliteit
+    let newSettings = { ...ocrSettings };
+    
+    // We voegen alleen de standaardinstellingen toe voor de gekozen kwaliteit
+    // zonder bestaande aangepaste instellingen te overschrijven, behalve bij initialisatie
+    switch (ocrQuality) {
+      case 'fast':
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 7,           // Eén regel tekst
+          engineMode: 3,            // Alleen LSTM (sneller)
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 1,         // Snelle modus
+          lstmIterations: 10,
+          goodQualityRating: 0.95,
+        };
+        break;
+        
+      case 'accurate':
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 6,           // Blok tekst (nauwkeuriger voor getallen)
+          engineMode: 2,            // LSTM (nauwkeuriger)
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 2,         // Betere kwaliteit
+          lstmIterations: 15,
+          oldXheight: false,
+          forcePropWords: false,
+          doInvert: false,
+          goodQualityRating: 0.98,
+          minSlope: 0.414,
+          maxSlope: 0.414, 
+          minXheight: 8,
+          maxOutlineChildren: 40,
+        };
+        break;
+        
+      default: // 'balanced'
+        newSettings = {
+          ...newSettings,
+          pagesegMode: 7,
+          engineMode: 2,
+          heavyNr: true,
+          minLinesize: 2.5,
+          numericMode: true,
+          preserveSpaces: false,
+          lstmChoiceMode: 1,
+          lstmIterations: 12,
+          doInvert: false,
+          goodQualityRating: 0.96,
+        };
     }
     
-    return (
-      <div className="flex flex-col items-center w-full max-w-xs mx-auto">
-        <div className={`w-full p-4 mb-4 text-center ${inputBgClass} rounded-lg transition-colors duration-300 border`} 
-             style={{borderColor: isValidNumber === true ? '#10b981' : isValidNumber === false ? '#ef4444' : '#e5e7eb'}}>
-          <input
-            type="text"
-            value={manualInput}
-            readOnly
-            className="w-full text-2xl text-center font-mono bg-transparent outline-none"
-            placeholder="Voer een nummer in"
-          />
-        </div>
-        
-        <div className="grid grid-cols-3 gap-2 w-full">
-          {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
-            <button
-              key={num}
-              onClick={() => addDigit(num.toString())}
-              className="bg-blue-500 text-white rounded-lg h-14 text-xl font-bold"
-            >
-              {num}
-            </button>
-          ))}
-          <button
-            onClick={clearInput}
-            className="bg-yellow-500 text-white rounded-lg h-14 text-xl font-bold"
-          >
-            C
-          </button>
-          <button
-            onClick={() => addDigit('0')}
-            className="bg-blue-500 text-white rounded-lg h-14 text-xl font-bold"
-          >
-            0
-          </button>
-          <button
-            onClick={removeLastDigit}
-            className="bg-red-500 text-white rounded-lg h-14 text-xl font-bold"
-          >
-            ←
-          </button>
-        </div>
-        
-        <button
-          onClick={switchToCameraMode}
-          className="w-full mt-6 px-4 py-3 bg-green-500 text-white rounded-lg text-lg font-bold"
-        >
-          Camera gebruiken
-        </button>
-      </div>
-    );
-  }, [manualInput, isValidNumber, addDigit, clearInput, removeLastDigit, switchToCameraMode]);
-
-  // Bereken achtergrondkleur voor camera container
-  const getCameraContainerClass = () => {
-    if (!isValidNumber && detectedNumber) {
-      return "border-2 border-red-500 bg-red-100 bg-opacity-30";
-    } else if (isValidNumber) {
-      return "border-2 border-green-500 bg-green-100 bg-opacity-30";
-    } else {
-      return "border-2 border-gray-300";
-    }
+    // Update state met de nieuwe instellingen
+    setOcrSettings(newSettings);
+    
+    // Pas de nieuwe instellingen toe
+    await applyCustomOcrParameters(newSettings);
   };
 
-  // Wijzig het zoomniveau
-  const handleZoomChange = (e) => {
-    const newZoom = parseFloat(e.target.value);
-    setZoomLevel(newZoom);
+  // Verbeterde afbeeldingsverwerking met OpenCV
+  const preprocessImage = (canvas) => {
+    if (!useImageProcessing) return canvas; // Skip als beeldverwerking uit staat
     
-    // Update feedback om te laten zien wat er gebeurt
-    setScanFeedback(`Zoom niveau: ${Math.round(newZoom * 100)}%`);
-    
-    // Reset na korte tijd
-    setTimeout(() => {
-      if (isStreaming) {
-        setScanFeedback('Camera actief, scannen start...');
+    try {
+      // Alleen OpenCV gebruiken als het geladen is
+      if (openCvLoaded) {
+        // Canvas naar OpenCV Mat converteren
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const src = cv.matFromImageData(imageData);
+        
+        // Doelmat aanmaken met dezelfde grootte en type
+        const dst = new cv.Mat();
+        
+        // Grayscale conversie
+        cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+        
+        // Pas instellingen toe als ze beschikbaar zijn
+        const options = extraProcessingOptions;
+        
+        // 1. VOORBEHANDELING (vóór threshold/canny)
+        
+        // Rotatie toepassen indien nodig
+        if (options.rotationAngle !== 0) {
+          const center = new cv.Point(dst.cols / 2, dst.rows / 2);
+          const rotMat = cv.getRotationMatrix2D(center, options.rotationAngle, 1);
+          cv.warpAffine(dst, dst, rotMat, new cv.Size(dst.cols, dst.rows));
+          rotMat.delete();
+        }
+        
+        // Ruisonderdrukking toepassen als waarde > 0
+        if (options.denoisingStrength > 0) {
+          // Voor sterke ruis: fastNlMeansDenoising is effectiever dan gaussianBlur
+          // Maar deze functie is niet beschikbaar in opencv-ts, dus we gebruiken een alternatief
+          try {
+            // Probeer eerst medianBlur (goed voor salt-and-pepper ruis)
+            const ksize = options.denoisingStrength * 2 + 1; // Oneven getal maken (3, 5, 7, ...)
+            // Beperk ksize tot maximaal 9 om te voorkomen dat de cijfers te veel vervagen
+            const limitedKsize = Math.min(9, ksize);
+            // Medianblur werkt alleen met oneven kernel-groottes
+            cv.medianBlur(dst, dst, limitedKsize);
+            
+            // Voeg daarna wat gaussianBlur toe voor gladde randen (als denoisingStrength > 5)
+            if (options.denoisingStrength > 5) {
+              const gaussSize = new cv.Size(3, 3);
+              cv.GaussianBlur(dst, dst, gaussSize, 0);
+            }
+          } catch (error) {
+            console.warn('Geavanceerde ruisonderdrukking mislukt, terugvallen op gaussianBlur:', error);
+            // Terugvallen op de standaard Gaussian blur om ruis te verminderen
+            const ksize = new cv.Size(5, 5);
+            cv.GaussianBlur(dst, dst, ksize, 0);
+          }
+        } else {
+          // Standaard Gaussian blur om ruis te verminderen
+          const ksize = new cv.Size(5, 5);
+          cv.GaussianBlur(dst, dst, ksize, 0);
+        }
+        
+        // Helderheid en contrast aanpassen
+        if (options.contrastLevel !== 1.0 || options.brightnessAdjust !== 0) {
+          // alpha = contrast, beta = brightness
+          dst.convertTo(dst, -1, options.contrastLevel, options.brightnessAdjust);
+        }
+        
+        // Gammacorrectie toepassen als waarde niet 1.0 is
+        if (options.gammaCorrection !== 1.0) {
+          // Gamma correctie voor betere details in donkere of lichte gebieden
+          const gamma = options.gammaCorrection;
+          const lookUpTable = new Uint8Array(256);
+          for (let i = 0; i < 256; i++) {
+            lookUpTable[i] = Math.min(255, Math.max(0, Math.pow(i / 255, 1 / gamma) * 255));
+          }
+          const lookUpTableMat = cv.matFromArray(1, 256, cv.CV_8U, lookUpTable);
+          cv.LUT(dst, lookUpTableMat, dst);
+          lookUpTableMat.delete();
+        }
+        
+        // Automatische scheefstandcorrectie (deskewing)
+        if (options.autoCorrectSkew) {
+          try {
+            // Zoek randen
+            const edges = new cv.Mat();
+            cv.Canny(dst, edges, 50, 150, 3, false);
+            
+            // Zoek lijnen met Hough transform
+            const lines = new cv.Mat();
+            try {
+              cv.HoughLines(edges, lines, 1, Math.PI / 180, 30);
+              
+              // Bereken gemiddelde hoek
+              let totalAngle = 0;
+              let validLines = 0;
+              
+              for (let i = 0; i < lines.rows; i++) {
+                const theta = lines.data32F[i * 2 + 1];
+                
+                // We zoeken alleen naar lijnen die horizontaal of verticaal zijn (binnen een bereik)
+                if (Math.abs(theta) < 0.3 || Math.abs(theta - Math.PI / 2) < 0.3) {
+                  // Bereken hoek in graden
+                  const angle = theta * (180 / Math.PI);
+                  totalAngle += angle;
+                  validLines++;
+                }
+              }
+              
+              if (validLines > 0) {
+                // Bereken gemiddelde hoek en roteer tegengesteld
+                const avgAngle = totalAngle / validLines;
+                const rotationAngle = 90 - avgAngle;
+                
+                // Alleen roteren als de hoek significant is (niet te klein)
+                if (Math.abs(rotationAngle) > 1.0) {
+                  const center = new cv.Point(dst.cols / 2, dst.rows / 2);
+                  const rotMat = cv.getRotationMatrix2D(center, rotationAngle, 1);
+                  cv.warpAffine(dst, dst, rotMat, new cv.Size(dst.cols, dst.rows));
+                  rotMat.delete();
+                }
+              }
+            } catch (houghError) {
+              console.warn('HoughLines niet beschikbaar, alternatieve scheefstandcorrectie wordt gebruikt:', houghError);
+              
+              // Alternatieve methode: Gebruik standaard rotatie op basis van gebruikersinvoer
+              if (options.rotationAngle !== 0) {
+                const center = new cv.Point(dst.cols / 2, dst.rows / 2);
+                const rotMat = cv.getRotationMatrix2D(center, options.rotationAngle, 1);
+                cv.warpAffine(dst, dst, rotMat, new cv.Size(dst.cols, dst.rows));
+                rotMat.delete();
+              }
+            }
+            
+            edges.delete();
+            if (lines) lines.delete();
+          } catch (error) {
+            console.warn('Scheefstandcorrectie mislukt:', error);
+          }
+        }
+        
+        // 2. HOOFDVERWERKING (threshold/canny)
+        
+        // Verschillende verwerkingstechnieken op basis van gebruikersselectie
+        switch (processingTechnique) {
+          case 'adaptive':
+            // Adaptieve threshold voor betere tekst-extractie
+            // Gebruik THRESH_BINARY in plaats van THRESH_BINARY_INV om kleuren om te draaien
+            // (zwarte tekst op witte achtergrond in plaats van witte tekst op zwarte achtergrond)
+            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+            
+            // VERBETERDE VOORBEWERKING VOOR CIJFERHERKENNING
+            
+            // 1. Maak een kopie van het threshold resultaat
+            const thresholded = new cv.Mat();
+            dst.copyTo(thresholded);
+            
+            // 2. Verdik de cijfers om kleine onderbrekingen te dichten (dilate)
+            const dilateM = cv.Mat.ones(options.dilationSize, options.dilationSize, cv.CV_8U);
+            const dilateAnchor = new cv.Point(-1, -1);
+            cv.dilate(dst, dst, dilateM, dilateAnchor, 1);
+            
+            // 3. Verwijder ruis via morphologische operaties (opening)
+            const openM = cv.Mat.ones(2, 2, cv.CV_8U);
+            const openAnchor = new cv.Point(-1, -1);
+            cv.morphologyEx(dst, dst, cv.MORPH_OPEN, openM, openAnchor, 1);
+            
+            // 4. Verbeter contrast voor duidelijkere cijfers
+            const contrastFactor = options.contrastLevel;
+            dst.convertTo(dst, -1, contrastFactor, options.brightnessAdjust);
+            
+            // 5. Geheugen vrijgeven
+            thresholded.delete();
+            dilateM.delete();
+            openM.delete();
+            break;
+          case 'binary':
+            // Eenvoudige binaire threshold
+            cv.threshold(dst, dst, 127, 255, cv.THRESH_BINARY);
+            
+            // TOEGEVOEGD: STERKE CONTRASTVERBETERING VOOR CIJFERS
+            
+            // 1. Maak een kopie van het threshold resultaat
+            const binaryThresholded = new cv.Mat();
+            dst.copyTo(binaryThresholded);
+            
+            // 2. Verdik de cijfers voor betere leesbaarheid (dilate)
+            const binaryDilateM = cv.Mat.ones(options.dilationSize + 1, options.dilationSize + 1, cv.CV_8U);
+            const binaryDilateAnchor = new cv.Point(-1, -1);
+            cv.dilate(dst, dst, binaryDilateM, binaryDilateAnchor, 1);
+            
+            // 3. Medianfilter om ruis te verwijderen maar randen te behouden
+            const ksize = 3; // Kernelgrootte voor medianfilter
+            cv.medianBlur(dst, dst, ksize);
+            
+            // 4. Geheugen vrijgeven
+            binaryThresholded.delete();
+            binaryDilateM.delete();
+            break;
+          case 'canny':
+            // Canny edge detection voor contouren
+            cv.Canny(dst, dst, 50, 150);
+            
+            // VERBETERDE CANNY VOOR CIJFERHERKENNING
+            
+            // 1. Dilate om randen te verbinden (dikker maken)
+            const cannyDilateM = cv.Mat.ones(options.dilationSize, options.dilationSize, cv.CV_8U);
+            const cannyDilateAnchor = new cv.Point(-1, -1);
+            cv.dilate(dst, dst, cannyDilateM, cannyDilateAnchor, 1);
+            
+            // 2. Converteer naar binair beeld (255 voor alle niet-nul pixels)
+            const cannyThresh = new cv.Mat();
+            cv.threshold(dst, cannyThresh, 1, 255, cv.THRESH_BINARY);
+            cannyThresh.copyTo(dst);
+            
+            try {
+              // 3. Zoek naar contouren in het beeld
+              const contours = new cv.MatVector();
+              const hierarchy = new cv.Mat();
+              
+              try {
+                // Probeer contouren te vinden
+                cv.findContours(dst, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+                
+                // 4. Maak een leeg wit beeld
+                dst.setTo(new cv.Scalar(255, 255, 255, 255));
+                
+                // 5. Teken alleen de grote contouren (filtert ruis)
+                for (let i = 0; i < contours.size(); ++i) {
+                  const contour = contours.get(i);
+                  const area = cv.contourArea(contour);
+                  // Teken alleen contouren groter dan een bepaalde drempelwaarde
+                  if (area > 50) {
+                    cv.drawContours(dst, contours, i, new cv.Scalar(0, 0, 0, 255), cv.FILLED);
+                  }
+                  contour.delete();
+                }
+              } catch (contourError) {
+                console.warn('Contourverwerking mislukt, terugvallen op alternatieve methode:', contourError);
+                
+                // Alternatieve methode als contourverwerking niet beschikbaar is:
+                // Eenvoudigweg het binary beeld gebruiken na dilatie
+                cannyThresh.copyTo(dst);
+                
+                // Extra morfologische operaties om ruis te verwijderen
+                const morphKernel = cv.Mat.ones(3, 3, cv.CV_8U);
+                cv.morphologyEx(dst, dst, cv.MORPH_OPEN, morphKernel, new cv.Point(-1, -1), 1);
+                morphKernel.delete();
+              }
+              
+              // 6. Geheugen vrijgeven
+              if (contours) contours.delete();
+              if (hierarchy) hierarchy.delete();
+            } catch (error) {
+              console.warn('Geavanceerde canny-verwerking mislukt, terugvallen op eenvoudige binaire drempel:', error);
+              
+              // Als alles mislukt, val terug op eenvoudige binaire threshold
+              cv.threshold(dst, dst, 127, 255, cv.THRESH_BINARY);
+            }
+            
+            cannyThresh.delete();
+            cannyDilateM.delete();
+            break;
+          default:
+            // Standaard adaptieve threshold
+            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+        }
+        
+        // 3. NABEHANDELING (na threshold/canny)
+        
+        // Extra randverbetering indien ingeschakeld
+        if (options.edgeEnhancement) {
+          try {
+            const edgesEnhanced = new cv.Mat();
+            const kernelSize = new cv.Size(3, 3);
+            
+            // Laplacian filter voor randdetectie
+            cv.Laplacian(dst, edgesEnhanced, cv.CV_8U, 1, 1, 0);
+            
+            // Combineer het origineel met de randen
+            cv.addWeighted(dst, 0.7, edgesEnhanced, 0.3, 0, dst);
+            
+            edgesEnhanced.delete();
+          } catch (error) {
+            console.warn('Randverbetering niet beschikbaar:', error);
+            // Als randverbetering niet beschikbaar is, doen we niks (overslaan)
+          }
+        }
+        
+        // Verscherping toepassen indien ingeschakeld
+        if (options.applySharpening) {
+          try {
+            // Probeer eerst met een aangepast filter
+            const kernel = new cv.Mat(3, 3, cv.CV_32F, new Float32Array([
+              0, -1, 0,
+              -1, 5, -1,
+              0, -1, 0
+            ]));
+            
+            cv.filter2D(dst, dst, -1, kernel);
+            kernel.delete();
+          } catch (filterError) {
+            console.warn('Filter2D niet beschikbaar voor verscherping:', filterError);
+            
+            try {
+              // Alternatieve methode: Blur en dan subtract
+              const blurred = new cv.Mat();
+              const ksize = new cv.Size(3, 3);
+              
+              // Blur de afbeelding
+              cv.GaussianBlur(dst, blurred, ksize, 0);
+              
+              // Unsharp masking: origineel - blur = randen
+              // Voeg terug toe aan origineel: origineel + randen = scherper origineel
+              cv.addWeighted(dst, 1.5, blurred, -0.5, 0, dst);
+              
+              blurred.delete();
+            } catch (altError) {
+              console.warn('Alternatieve verscherping mislukt:', altError);
+              // Als het nog steeds niet lukt, doen we niks
+            }
+          }
+        }
+        
+        // Kleuren inverteren indien ingeschakeld
+        if (options.invertColors) {
+          try {
+            cv.bitwise_not(dst, dst);
+          } catch (error) {
+            console.warn('Kleurinversie niet beschikbaar:', error);
+            // Als kleurinversie niet beschikbaar is, probeer het handmatig
+            try {
+              // Handmatige inversie door pixels te manipuleren
+              for (let i = 0; i < dst.rows; i++) {
+                for (let j = 0; j < dst.cols; j++) {
+                  const pixel = dst.ucharPtr(i, j);
+                  pixel[0] = 255 - pixel[0];
+                }
+              }
+            } catch (manualError) {
+              console.warn('Handmatige kleurinversie mislukt:', manualError);
+            }
+          }
+        }
+        
+        // Terug converteren naar canvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        cv.imshow(tempCanvas, dst);
+        
+        // Terug naar originele canvas kopiëren
+        ctx.drawImage(tempCanvas, 0, 0);
+        
+        // Debug afbeelding weergeven indien nodig
+        if (showDebug) {
+          setDebugImage(tempCanvas.toDataURL());
+        }
+        
+        // Geheugen vrijgeven
+        src.delete();
+        dst.delete();
+        
+        if (debugImage && showDebug) {
+          // Voor debug doeleinden laten we de originele canvas ongewijzigd
+          return canvas;
+        }
+        
+        return canvas;
+      } else {
+        // Terugvallen op de originele beeldverwerking als OpenCV niet geladen is
+        console.log('OpenCV niet geladen, terugvallen op standaard beeldverwerking');
+        return fallbackImageProcessing(canvas);
       }
-    }, 1000);
+    } catch (error) {
+      console.error('OpenCV verwerking mislukt:', error);
+      // Terugvallen op de originele beeldverwerking als OpenCV faalt
+      return fallbackImageProcessing(canvas);
+    }
   };
+
+  // Neem een snapshot en verwerk het met OCR
+  const captureImage = useCallback(async () => {
+    if (!isStreaming || isProcessing || !workerRef.current) return;
+    
+    setIsProcessing(true);
+    processingTimeRef.current = new Date().getTime(); // Sla het tijdstip op waarop de verwerking start
+    setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
+    
+    // Veiligheidstimer om isProcessing te resetten als verwerking vastloopt
+    const processingTimeout = setTimeout(() => {
+      console.log('OCR-verwerking duurde te lang, resetten...');
+      setIsProcessing(false);
+      processingTimeRef.current = null; // Reset processing time reference
+      setScanFeedback('Scannen hervat na timeout...');
+    }, 8000); // 8 seconden timeout
+    
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      
+      if (video && canvas) {
+        const context = canvas.getContext('2d');
+        
+        // Pas canvas grootte aan voor optimale OCR met hogere pixeldichtheid
+        // De fysieke grootte van de uitsnede blijft hetzelfde, maar we verhogen de pixeldichtheid
+        canvas.width = scanFrame.width * scanFrame.pixelDensity;
+        canvas.height = scanFrame.height * scanFrame.pixelDensity;
+        
+        // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
+        // rekening houdend met zoomniveau
+        
+        // 1. Bepaal de werkelijke afmetingen van het videoframe
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        
+        // 2. Bereken het middelpunt van de video
+        const centerX = videoWidth / 2;
+        const centerY = videoHeight / 2;
+        
+        // 3. Bereken de schaal voor het uitsnijden, rekening houdend met zoom
+        // Dit zorgt dat we precies het juiste gebied uitsnijden dat in het kader zichtbaar is
+        const scaledWidth = scanFrame.width * zoomLevel;
+        const scaledHeight = scanFrame.height * zoomLevel;
+        
+        // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
+        // Dit zorgt dat we het juiste gebied pakken, ongeacht het zoomniveau
+        const frameX = centerX - (scaledWidth / 2);
+        const frameY = centerY - (scaledHeight / 2);
+        
+        // Trek alleen het gedeelte binnen het kader op de canvas
+        // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
+        context.drawImage(
+          video,                // bron
+          frameX, frameY,       // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
+          scaledWidth, scaledHeight,  // grootte uitsnede, gecorrigeerd voor zoom
+          0, 0,                 // beginpunt op canvas
+          canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
+        );
+        
+        // Maak een kopie van originele afbeelding voor debug
+        const originalImageData = canvas.toDataURL('image/png');
+        
+        // Update debug weergave direct om te tonen wat er wordt gescand
+        if (showDebug) {
+          setDebugImage(originalImageData);
+        }
+        
+        // Pas beeldverbetering toe
+        preprocessImage(canvas);
+        
+        // Maak een kopie van het geoptimaliseerde beeld
+        const processedImageData = canvas.toDataURL('image/png', 1.0); // Gebruik maximale kwaliteit
+        
+        console.log("Verwerken van geoptimaliseerde afbeelding...");
+        
+        // DEBUG: Toon beelden in de console (als ontwikkelaar)
+        if (showDebug) {
+          setDebugImage(useImageProcessing ? processedImageData : originalImageData);
+        }
+        
+        try {
+          const { data } = await workerRef.current.recognize(
+            useImageProcessing ? processedImageData : originalImageData
+          );
+          const text = data.text.trim();
+          
+          // Debug info
+          console.log("OCR tekst:", text);
+          console.log("OCR confidence:", data.confidence);
+          
+          // Verbeterde nummerextractie
+          // Eerst zoeken naar alle getallen in de gedetecteerde tekst
+          const numbersFound = text.match(/\d+/g);
+          console.log("Gevonden getallen:", numbersFound);
+          
+          if (numbersFound && numbersFound.length > 0) {
+            // Filter en pad getallen zodat ze exact 4 cijfers hebben
+            const filteredNumbers = numbersFound.map(num => {
+              if (num.length > 4) {
+                // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
+                return num.slice(-4);
+              } else if (num.length < 4) {
+                // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
+                return num.padStart(4, '0');
+              }
+              return num; // Al 4 cijfers
+            });
+            
+            console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
+            
+            let bestNumber = '';
+            
+            // Zoek naar exacte 4-cijferige getallen (prioriteit)
+            const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
+            if (fourDigitNumbers.length > 0) {
+              bestNumber = fourDigitNumbers[0];
+            } else {
+              // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
+              // neem het langste beschikbare getal
+              let maxLength = 0;
+              for (const num of filteredNumbers) {
+                if (num.length > maxLength) {
+                  maxLength = num.length;
+                  bestNumber = num;
+                }
+              }
+            }
+            
+            // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
+            const number = bestNumber;
+            
+            // Als we bezig zijn met verificatie
+            if (verificationInProgress && lastDetectedNumber) {
+              if (number === lastDetectedNumber) {
+                // Nummer is geverifieerd, verwerk het nu
+                setDetectedNumber(number);
+                
+                // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
+                const isValid = validateNumber(number, duckNumbers);
+                setIsValidNumber(isValid);
+                
+                setScanFeedback(`Nummer geverifieerd: ${number}`);
+                
+                if (onNumberDetected) {
+                  onNumberDetected(number, isValid);
+                }
+                
+                // Reset verificatie status
+                setVerificationInProgress(false);
+                setLastDetectedNumber(null);
+                
+                // Pauzeer het scannen voor 2 seconden
+                setIsPaused(true);
+                console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
+                setTimeout(() => {
+                  setIsPaused(false);
+                  setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
+                  processingTimeRef.current = null; // Reset processing time reference
+                  setScanFeedback('Scannen hervat...');
+                  console.log("Scannen hervat na pauze");
+                  
+                  // Na 1 seconde de scan feedback updaten
+                  setTimeout(() => {
+                    if (isStreaming) {
+                      setScanFeedback('Camera scant nu...');
+                    }
+                  }, 1000);
+                }, 2000);
+              } else {
+                // Getallen komen niet overeen, reset en probeer opnieuw
+                setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
+                setVerificationInProgress(false);
+                setLastDetectedNumber(null);
+                setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
+                processingTimeRef.current = null; // Reset processing time reference
+              }
+            } else {
+              // Start verificatieproces
+              setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
+              setLastDetectedNumber(number);
+              setVerificationInProgress(true);
+              
+              // Onmiddellijk nog een keer scannen voor verificatie
+              setTimeout(() => {
+                setIsProcessing(false); // Reset processing flag voor de tweede scan
+                processingTimeRef.current = null; // Reset processing time reference
+                captureImage(); // Roep zichzelf opnieuw aan voor verificatie
+              }, 300); // Kleine vertraging om een andere frame te krijgen
+            }
+          } else {
+            // Geen getallen gedetecteerd
+            if (verificationInProgress) {
+              setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
+              setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
+              processingTimeRef.current = null; // Reset processing time reference
+            } else {
+              setDetectedNumber('');
+              setIsValidNumber(null);
+              setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+              setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
+              processingTimeRef.current = null; // Reset processing time reference
+            }
+          }
+        } catch (ocrError) {
+          console.error('OCR-fout:', ocrError);
+          setScanFeedback('OCR-fout opgetreden. Probeer opnieuw...');
+          setIsProcessing(false);
+          processingTimeRef.current = null; // Reset processing time reference
+        }
+      } else {
+        setIsProcessing(false);
+        processingTimeRef.current = null; // Reset processing time reference
+        setScanFeedback('Camera niet beschikbaar');
+      }
+    } catch (error) {
+      console.error('Fout tijdens scannen:', error);
+      setScanFeedback('Fout tijdens scannen. Probeer opnieuw...');
+      setIsProcessing(false);
+      processingTimeRef.current = null; // Reset processing time reference
+    } finally {
+      // Annuleer de veiligheidstimer omdat we klaar zijn (succesvol of met fout)
+      clearTimeout(processingTimeout);
+    }
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, preprocessImage, scanFrame.width, scanFrame.height, scanFrame.pixelDensity, validateNumber]);
 
   // Render de UI voor camera-modus met scan-kader
   const renderCamera = () => {
@@ -1089,6 +1394,384 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                         Contouren
                       </button>
                     </div>
+                    
+                    {/* Geavanceerde beeldverwerkingsinstellingen */}
+                    <div className="mt-2">
+                      <button
+                        onClick={() => setShowAdvancedProcessing(!showAdvancedProcessing)}
+                        className="text-xs bg-gray-600 w-full rounded py-1 px-2"
+                      >
+                        {showAdvancedProcessing ? "Verberg extra beeldopties" : "Toon extra beeldopties"}
+                      </button>
+                      
+                      {showAdvancedProcessing && (
+                        <div className="mt-2 space-y-2 bg-gray-700 p-2 rounded-md">
+                          {/* Contrast instelling */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Contrast: {extraProcessingOptions.contrastLevel.toFixed(1)}</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, contrastLevel: 1.5}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="3.0"
+                              step="0.1"
+                              value={extraProcessingOptions.contrastLevel}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, contrastLevel: parseFloat(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Helderheid instelling */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Helderheid: {extraProcessingOptions.brightnessAdjust}</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, brightnessAdjust: 10}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="-50"
+                              max="50"
+                              step="5"
+                              value={extraProcessingOptions.brightnessAdjust}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, brightnessAdjust: parseInt(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Cijferdikte instelling */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Cijferdikte: {extraProcessingOptions.dilationSize}</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, dilationSize: 2}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="1"
+                              max="5"
+                              step="1"
+                              value={extraProcessingOptions.dilationSize}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, dilationSize: parseInt(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Ruisonderdrukking instelling */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Ruisonderdrukking: {extraProcessingOptions.denoisingStrength}</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, denoisingStrength: 3}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="0"
+                              max="10"
+                              step="1"
+                              value={extraProcessingOptions.denoisingStrength}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, denoisingStrength: parseInt(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Gamma correctie */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Gamma: {extraProcessingOptions.gammaCorrection.toFixed(1)}</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: 1.0}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="0.5"
+                              max="2.0"
+                              step="0.1"
+                              value={extraProcessingOptions.gammaCorrection}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: parseFloat(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Rotatie instelling */}
+                          <div>
+                            <div className="flex justify-between">
+                              <label className="text-xs">Rotatie: {extraProcessingOptions.rotationAngle}°</label>
+                              <button 
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, rotationAngle: 0}))}
+                                className="text-xs bg-gray-500 px-1 rounded"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <input
+                              type="range"
+                              min="-45"
+                              max="45"
+                              step="1"
+                              value={extraProcessingOptions.rotationAngle}
+                              onChange={e => setExtraProcessingOptions(prev => ({...prev, rotationAngle: parseInt(e.target.value)}))}
+                              className="w-full h-1 mt-1"
+                            />
+                          </div>
+                          
+                          {/* Extra opties als checkboxes */}
+                          <div className="flex flex-wrap gap-2 text-xs">
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                id="invertColors"
+                                checked={extraProcessingOptions.invertColors}
+                                onChange={e => setExtraProcessingOptions(prev => ({...prev, invertColors: e.target.checked}))}
+                                className="mr-1"
+                              />
+                              <label htmlFor="invertColors">Kleuren inverteren</label>
+                            </div>
+                            
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                id="applySharpening"
+                                checked={extraProcessingOptions.applySharpening}
+                                onChange={e => setExtraProcessingOptions(prev => ({...prev, applySharpening: e.target.checked}))}
+                                className="mr-1"
+                              />
+                              <label htmlFor="applySharpening">Verscherping</label>
+                            </div>
+                            
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                id="autoCorrectSkew"
+                                checked={extraProcessingOptions.autoCorrectSkew}
+                                onChange={e => setExtraProcessingOptions(prev => ({...prev, autoCorrectSkew: e.target.checked}))}
+                                className="mr-1"
+                              />
+                              <label htmlFor="autoCorrectSkew">Auto-rechtzetten</label>
+                            </div>
+                            
+                            <div className="flex items-center">
+                              <input
+                                type="checkbox"
+                                id="edgeEnhancement"
+                                checked={extraProcessingOptions.edgeEnhancement}
+                                onChange={e => setExtraProcessingOptions(prev => ({...prev, edgeEnhancement: e.target.checked}))}
+                                className="mr-1"
+                              />
+                              <label htmlFor="edgeEnhancement">Randverbetering</label>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Camera instellingen */}
+              <div className="setting-group mt-2">
+                <button
+                  onClick={() => setShowAdvancedCamera(!showAdvancedCamera)}
+                  className="text-xs bg-gray-600 w-full rounded py-1 px-2"
+                >
+                  {showAdvancedCamera ? "Verberg camera-instellingen" : "Toon camera-instellingen"}
+                </button>
+                
+                {showAdvancedCamera && (
+                  <div className="mt-2 space-y-2 bg-gray-700 p-2 rounded-md">
+                    {/* Camera exposureCompensation */}
+                    <div>
+                      <div className="flex justify-between">
+                        <label className="text-xs">Belichting: {cameraSettings.exposureCompensation}</label>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, exposureCompensation: 0}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack && videoTrack.getCapabilities().exposureCompensation) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ exposureCompensation: 0 }]
+                                }).catch(e => console.warn('Kan belichting niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className="text-xs bg-gray-500 px-1 rounded"
+                        >
+                          Reset
+                        </button>
+                      </div>
+                      <input
+                        type="range"
+                        min="-3"
+                        max="3"
+                        step="0.5"
+                        value={cameraSettings.exposureCompensation}
+                        onChange={e => {
+                          const value = parseFloat(e.target.value);
+                          setCameraSettings(prev => ({...prev, exposureCompensation: value}));
+                          
+                          // Pas direct toe op camera indien mogelijk
+                          if (mediaStream) {
+                            const videoTrack = mediaStream.getVideoTracks()[0];
+                            if (videoTrack && videoTrack.getCapabilities().exposureCompensation) {
+                              videoTrack.applyConstraints({
+                                advanced: [{ exposureCompensation: value }]
+                              }).catch(e => console.warn('Kan belichting niet aanpassen:', e));
+                            }
+                          }
+                        }}
+                        className="w-full h-1 mt-1"
+                      />
+                    </div>
+                    
+                    {/* Focus modus */}
+                    <div className="mt-2">
+                      <label className="text-xs block mb-1">Focus modus:</label>
+                      <div className="flex justify-between space-x-1">
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, focusMode: 'continuous'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ focusMode: 'continuous' }]
+                                }).catch(e => console.warn('Kan focus niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded flex-1 ${cameraSettings.focusMode === 'continuous' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Continu
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, focusMode: 'manual'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ focusMode: 'manual' }]
+                                }).catch(e => console.warn('Kan focus niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded flex-1 ${cameraSettings.focusMode === 'manual' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Handmatig
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, focusMode: 'fixed'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ focusMode: 'fixed' }]
+                                }).catch(e => console.warn('Kan focus niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded flex-1 ${cameraSettings.focusMode === 'fixed' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Vast
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Witbalans */}
+                    <div className="mt-2">
+                      <label className="text-xs block mb-1">Witbalans:</label>
+                      <div className="grid grid-cols-2 gap-1">
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, whiteBalance: 'auto'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ whiteBalanceMode: 'continuous' }]
+                                }).catch(e => console.warn('Kan witbalans niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded ${cameraSettings.whiteBalance === 'auto' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Auto
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, whiteBalance: 'cloudy'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack && videoTrack.getCapabilities().whiteBalanceMode) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ whiteBalanceMode: 'manual', colorTemperature: 6500 }]
+                                }).catch(e => console.warn('Kan witbalans niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded ${cameraSettings.whiteBalance === 'cloudy' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Bewolkt
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, whiteBalance: 'sunny'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack && videoTrack.getCapabilities().whiteBalanceMode) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ whiteBalanceMode: 'manual', colorTemperature: 5500 }]
+                                }).catch(e => console.warn('Kan witbalans niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded ${cameraSettings.whiteBalance === 'sunny' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          Zonnig
+                        </button>
+                        <button 
+                          onClick={() => {
+                            setCameraSettings(prev => ({...prev, whiteBalance: 'fluorescent'}));
+                            if (mediaStream) {
+                              const videoTrack = mediaStream.getVideoTracks()[0];
+                              if (videoTrack && videoTrack.getCapabilities().whiteBalanceMode) {
+                                videoTrack.applyConstraints({
+                                  advanced: [{ whiteBalanceMode: 'manual', colorTemperature: 4000 }]
+                                }).catch(e => console.warn('Kan witbalans niet aanpassen:', e));
+                              }
+                            }
+                          }}
+                          className={`px-2 py-1 text-xs rounded ${cameraSettings.whiteBalance === 'fluorescent' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        >
+                          TL-licht
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -1235,6 +1918,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       classify_max_slope: settings.maxSlope.toString(),
       textord_min_xheight: settings.minXheight.toString(),
       edges_max_children_per_outline: settings.maxOutlineChildren.toString(),
+      // Nieuwe verbeterde cijferherkenningsparameters
+      textord_space_size_is_variable: '0', // Vast formaat voor cijferruimtes
+      textord_tabfind_vertical_text: '0', // Geen verticale tekst verwachten
+      language_model_ngram_on: '0', // Ngram uitschakelen (deze is ontworpen voor normale taalherkenning)
+      textord_force_make_prop_words: '0', // Geen proportionele tekst forceren
+      textord_noise_rejwords: '1', // Woorden met veel ruis afwijzen
+      // Cijferspecifieke instellingen (als deze aanwezig zijn)
+      textord_noise_sizelimit: '0.5', // Kleinere ruislimiet voor cijfers
+      textord_noise_normratio: '8', // Hogere ruisverhouding voor beter filter
+      tessedit_single_match: '0', // Sta meerdere matches toe voor één karakter
+      dignorm_normalize_mode: settings.dignormNormalizeMode?.toString() || '8',
+      dignorm_adjust_non_space: settings.dignormAdjNonSpace ? '1' : '0',
+      dignorm_use_normalized_quad_moments: settings.dignormQuadMoments ? '1' : '0',
     };
     
     // Combineer basis en aangepaste parameters
@@ -1253,6 +1949,62 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     } catch (error) {
       console.error('Fout bij het instellen van OCR parameters:', error);
     }
+  };
+
+  // Schakel naar handmatige invoermodus
+  const switchToManualMode = () => {
+    stopCamera();
+    setIsManualMode(true);
+    setManualInput('');
+    setDetectedNumber('');
+    setIsValidNumber(null);
+    setScanFeedback('');
+  };
+
+  // Schakel terug naar camera-modus
+  const switchToCameraMode = () => {
+    setIsManualMode(false);
+    startCamera();
+  };
+
+  // Voeg cijfer toe aan handmatige invoer
+  const addDigit = (digit) => {
+    // Stop als we al 4 cijfers hebben bereikt
+    if (manualInput.length >= 4) return;
+    
+    const newInput = manualInput + digit;
+    setManualInput(newInput);
+    
+    // Controleer het nummer direct na elke invoer
+    setDetectedNumber(newInput);
+    
+    // Valideer pas wanneer we 4 cijfers hebben of als dit een getal is dat met 0 begint
+    // (dan valideren we ook onmiddellijk bij 1, 2 of 3 cijfers)
+    const isValid = validateNumber(newInput, duckNumbers);
+    setIsValidNumber(isValid);
+    
+    console.log(`Handmatige invoer: "${newInput}", Geldig: ${isValid}`);
+    
+    // Rapporteer ook aan de parent component
+    if (onNumberDetected) {
+      onNumberDetected(newInput, isValid);
+    }
+  };
+
+  // Verwijder laatste cijfer van handmatige invoer
+  const removeLastDigit = () => {
+    if (manualInput.length > 0) {
+      setManualInput(manualInput.slice(0, -1));
+      setDetectedNumber('');
+      setIsValidNumber(null);
+    }
+  };
+
+  // Wis handmatige invoer
+  const clearInput = () => {
+    setManualInput('');
+    setDetectedNumber('');
+    setIsValidNumber(null);
   };
 
   return (
