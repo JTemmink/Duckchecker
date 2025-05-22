@@ -14,11 +14,18 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
   const [deleteSuccess, setDeleteSuccess] = useState(false);
   const [selectedNumber, setSelectedNumber] = useState(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
   
   useEffect(() => {
     // Detecteer of het apparaat een desktop/laptop is
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     setIsDesktop(!isMobileDevice);
+    
+    // Detecteer of we in Vercel draaien
+    if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
+      setIsDemoMode(true);
+    }
   }, []);
 
   // Functie om admin toegang te valideren
@@ -64,7 +71,11 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
         throw new Error(errorData.error || 'Kon nummer niet opslaan');
       }
 
-      // Toon succes-melding en reset invoerveld
+      // Verwerk het antwoord
+      const data = await response.json();
+      
+      // Toon de juiste succes-melding
+      setSuccessMessage(data.message || 'Nummer succesvol toegevoegd!');
       setAddSuccess(true);
       setNewDuckNumber('');
       setAdminError('');
@@ -72,11 +83,16 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
       // Verberg de succes-melding na 3 seconden
       setTimeout(() => {
         setAddSuccess(false);
+        setSuccessMessage('');
       }, 3000);
       
-      // Vernieuw de lijst met eendnummers
-      if (onRefreshNeeded) {
+      // Vernieuw de lijst met eendnummers als we niet in demo-modus zijn
+      // of als we in demo-modus zijn maar wel een "isDemo" vlag hebben in het antwoord
+      if (!isDemoMode || !data.isDemo) {
         await onRefreshNeeded();
+      } else if (isDemoMode && data.isDemo) {
+        // In demo-modus: voeg het nummer tijdelijk toe aan de lijst voor demo-doeleinden
+        onNumberDetected(paddedNumber, true);
       }
       
     } catch (error) {
@@ -113,7 +129,11 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
         throw new Error(errorData.error || 'Kon nummer niet verwijderen');
       }
 
-      // Toon succes-melding en reset
+      // Verwerk het antwoord
+      const data = await response.json();
+      
+      // Toon de juiste succes-melding
+      setSuccessMessage(data.message || 'Nummer succesvol verwijderd!');
       setDeleteSuccess(true);
       setSelectedNumber(null);
       setIsConfirmingDelete(false);
@@ -122,10 +142,12 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
       // Verberg de succes-melding na 3 seconden
       setTimeout(() => {
         setDeleteSuccess(false);
+        setSuccessMessage('');
       }, 3000);
       
-      // Vernieuw de lijst met eendnummers
-      if (onRefreshNeeded) {
+      // Vernieuw de lijst met eendnummers als we niet in demo-modus zijn
+      // of als we in demo-modus zijn maar wel een "isDemo" vlag hebben in het antwoord
+      if (!isDemoMode || !data.isDemo) {
         await onRefreshNeeded();
       }
       
@@ -147,6 +169,9 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
             <h1 className="text-3xl font-bold text-black drop-shadow-lg">
               DuckCheck
             </h1>
+            {isDemoMode && (
+              <p className="text-sm text-orange-500 mt-1">Demo Modus</p>
+            )}
           </div>
           
           {/* Afbeelding in het midden */}
@@ -168,7 +193,7 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
                 onClick={() => setMode('camera')}
                 className="bg-yellow-500 hover:bg-yellow-600 text-white py-4 px-6 rounded-xl text-xl font-bold shadow-lg transition-all"
               >
-                Camera
+                Camera (Beta)
               </button>
               <button
                 onClick={() => setMode('manual')}
@@ -239,6 +264,12 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
           </button>
         </div>
         
+        {isDemoMode && (
+          <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm">
+            <p>Je gebruikt de demo-modus op Vercel. Wijzigingen worden niet permanent opgeslagen.</p>
+          </div>
+        )}
+        
         {/* Nieuw nummer toevoegen */}
         <div className="mb-6 p-4 bg-white rounded-lg shadow">
           <h2 className="text-lg font-bold mb-3">Nieuw eendnummer toevoegen</h2>
@@ -261,11 +292,8 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
           {adminError && (
             <p className="text-red-500 text-sm mt-1">{adminError}</p>
           )}
-          {addSuccess && (
-            <p className="text-green-500 text-sm mt-1">Nummer succesvol toegevoegd!</p>
-          )}
-          {deleteSuccess && (
-            <p className="text-green-500 text-sm mt-1">Nummer succesvol verwijderd!</p>
+          {(addSuccess || deleteSuccess) && (
+            <p className="text-green-500 text-sm mt-1">{successMessage}</p>
           )}
         </div>
         
