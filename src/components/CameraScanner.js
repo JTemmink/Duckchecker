@@ -113,13 +113,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     };
   }, [ocrQuality]);
 
-  // Functie om OCR parameters te updaten op basis van kwaliteit
+  // Functie om OCR parameters te updaten op basis van kwaliteit - ALLEEN voor initiële setup
   const updateOcrParameters = async () => {
     if (!workerRef.current) return;
+    
+    // Deze functie wordt alleen gebruikt voor de initiële setup
+    // Voor latere updates gebruiken we updateOcrSetting en de kwaliteitsknoppen
     
     // Nieuwe instellingen op basis van de gekozen kwaliteit
     let newSettings = { ...ocrSettings };
     
+    // We voegen alleen de standaardinstellingen toe voor de gekozen kwaliteit
+    // zonder bestaande aangepaste instellingen te overschrijven, behalve bij initialisatie
     switch (ocrQuality) {
       case 'fast':
         newSettings = {
@@ -377,7 +382,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       // TESSERACT PARAMETERS AANPASSEN
       // Geoptimaliseerde parameters voor cijferherkenning
       // Aangepast voor het bredere maar lagere scanframe (180px × 70px)
-      await updateOcrParameters();
+      // await updateOcrParameters(); // Verwijderd om handmatige instellingen te behouden
       
       const { data } = await workerRef.current.recognize(
         useImageProcessing ? processedImageData : originalImageData
@@ -451,8 +456,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             // Pauzeer het scannen voor 2 seconden
             setIsPaused(true);
+            console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
             setTimeout(() => {
               setIsPaused(false);
+              setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
+              setScanFeedback('Scannen hervat...');
+              console.log("Scannen hervat na pauze");
+              
+              // Na 1 seconde de scan feedback updaten
+              setTimeout(() => {
+                if (isStreaming) {
+                  setScanFeedback('Camera scant nu...');
+                }
+              }, 1000);
             }, 2000);
           } else {
             // Getallen komen niet overeen, reset en probeer opnieuw
@@ -478,10 +494,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
           setVerificationInProgress(false);
           setLastDetectedNumber(null);
+          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
         } else {
           setDetectedNumber('');
           setIsValidNumber(null);
           setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+          setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
         }
       }
     } else {
@@ -514,8 +532,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         setScanFeedback('Camera scant nu...');
         captureImage();
         console.log("Nieuwe scan gestart - " + new Date().toLocaleTimeString());
+      } else {
+        // Log de status voor debugdoeleinden
+        console.log(`Scan overgeslagen - Status: isProcessing=${isProcessing}, isStreaming=${isStreaming}, isPaused=${isPaused}`);
       }
-    }, 2000);
+    }, 1000); // Elke seconde scannen in plaats van elke 2 seconden
   }, [stopAutoScan, isProcessing, isStreaming, isPaused, captureImage]);
 
   // Start de camera
