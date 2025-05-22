@@ -14,18 +14,12 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
   const [deleteSuccess, setDeleteSuccess] = useState(false);
   const [selectedNumber, setSelectedNumber] = useState(null);
   const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
-  const [isDemoMode, setIsDemoMode] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   
   useEffect(() => {
     // Detecteer of het apparaat een desktop/laptop is
     const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
     setIsDesktop(!isMobileDevice);
-    
-    // Detecteer of we in Vercel draaien
-    if (typeof window !== 'undefined' && window.location.hostname.includes('vercel.app')) {
-      setIsDemoMode(true);
-    }
   }, []);
 
   // Functie om admin toegang te valideren
@@ -86,14 +80,8 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
         setSuccessMessage('');
       }, 3000);
       
-      // Vernieuw de lijst met eendnummers als we niet in demo-modus zijn
-      // of als we in demo-modus zijn maar wel een "isDemo" vlag hebben in het antwoord
-      if (!isDemoMode || !data.isDemo) {
-        await onRefreshNeeded();
-      } else if (isDemoMode && data.isDemo) {
-        // In demo-modus: voeg het nummer tijdelijk toe aan de lijst voor demo-doeleinden
-        onNumberDetected(paddedNumber, true);
-      }
+      // Vernieuw de lijst met eendnummers
+      await onRefreshNeeded();
       
     } catch (error) {
       console.error('Fout bij toevoegen van nummer:', error);
@@ -145,11 +133,8 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
         setSuccessMessage('');
       }, 3000);
       
-      // Vernieuw de lijst met eendnummers als we niet in demo-modus zijn
-      // of als we in demo-modus zijn maar wel een "isDemo" vlag hebben in het antwoord
-      if (!isDemoMode || !data.isDemo) {
-        await onRefreshNeeded();
-      }
+      // Vernieuw de lijst met eendnummers
+      await onRefreshNeeded();
       
     } catch (error) {
       console.error('Fout bij verwijderen van nummer:', error);
@@ -169,9 +154,6 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
             <h1 className="text-3xl font-bold text-black drop-shadow-lg">
               DuckCheck
             </h1>
-            {isDemoMode && (
-              <p className="text-sm text-orange-500 mt-1">Demo Modus</p>
-            )}
           </div>
           
           {/* Afbeelding in het midden */}
@@ -263,12 +245,6 @@ export default function LandingPage({ duckNumbers, onNumberDetected, onRefreshNe
             Terug
           </button>
         </div>
-        
-        {isDemoMode && (
-          <div className="mb-4 p-3 bg-orange-50 border border-orange-200 rounded-lg text-sm">
-            <p>Je gebruikt de demo-modus op Vercel. Wijzigingen worden niet permanent opgeslagen.</p>
-          </div>
-        )}
         
         {/* Nieuw nummer toevoegen */}
         <div className="mb-6 p-4 bg-white rounded-lg shadow">
