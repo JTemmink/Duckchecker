@@ -1,10 +1,17 @@
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Image from 'next/image';
 import CameraScanner from './CameraScanner';
 
 export default function LandingPage({ duckNumbers }) {
   const [mode, setMode] = useState(null); // null, 'camera', of 'manual'
+  const [isDesktop, setIsDesktop] = useState(false);
+  
+  useEffect(() => {
+    // Detecteer of het apparaat een desktop/laptop is
+    const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    setIsDesktop(!isMobileDevice);
+  }, []);
 
   // Als er nog geen modus is gekozen, toon landingspagina
   if (!mode) {
@@ -46,6 +53,12 @@ export default function LandingPage({ duckNumbers }) {
               >
                 Handmatig
               </button>
+              
+              {isDesktop && (
+                <div className="text-center text-sm text-gray-600 mt-2 p-2 bg-gray-100 rounded-lg">
+                  Let op: Op laptops/desktops wordt de frontcamera gebruikt omdat achtercamera's meestal niet beschikbaar zijn.
+                </div>
+              )}
             </div>
           </div>
         </div>

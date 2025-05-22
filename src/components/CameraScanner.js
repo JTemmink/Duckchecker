@@ -1,6 +1,7 @@
 'use client';
 import { useRef, useState, useEffect, useCallback, useMemo } from 'react';
 import { createWorker } from 'tesseract.js';
+import cv from 'opencv-ts';
 
 export default function CameraScanner({ duckNumbers, onNumberDetected, initialMode = 'camera' }) {
   const videoRef = useRef(null);
@@ -27,6 +28,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [torchEnabled, setTorchEnabled] = useState(false); // flitser aan/uit
   const [mediaStream, setMediaStream] = useState(null); // Camera mediastream opslaan
   const [hasTorch, setHasTorch] = useState(false); // Of het apparaat een flitser heeft
+  const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
+  const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
   const [ocrSettings, setOcrSettings] = useState({
     // Segmentatie mode
     pagesegMode: 6, // 6 = blok tekst, 7 = één regel
@@ -57,7 +60,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     height: 70, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
   };
 
-  // Initialiseer de Tesseract worker
+  // Initialiseer de Tesseract worker en OpenCV
   useEffect(() => {
     const initWorker = async () => {
       workerRef.current = await createWorker('eng');
@@ -65,7 +68,44 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       await updateOcrParameters();
     };
 
+    // OpenCV initialisatie
+    const initOpenCV = async () => {
+      if (typeof cv !== 'undefined' && cv.getBuildInformation) {
+        // OpenCV is al geladen
+        setOpenCvLoaded(true);
+        console.log('OpenCV is al geladen');
+      } else {
+        // Wacht tot OpenCV geladen is
+        console.log('Wachten tot OpenCV geladen is...');
+        if (cv.onRuntimeInitialized) {
+          cv.onRuntimeInitialized = () => {
+            setOpenCvLoaded(true);
+            console.log('OpenCV is succesvol geïnitialiseerd');
+          };
+        } else {
+          // Als de callback eigenschap niet bestaat, controleer periodiek
+          const checkInterval = setInterval(() => {
+            if (typeof cv !== 'undefined' && cv.getBuildInformation) {
+              clearInterval(checkInterval);
+              setOpenCvLoaded(true);
+              console.log('OpenCV is succesvol geïnitialiseerd');
+            }
+          }, 500);
+          
+          // Stop controle na 10 seconden als het niet lukt
+          setTimeout(() => {
+            clearInterval(checkInterval);
+            if (!openCvLoaded) {
+              console.warn('OpenCV kon niet geladen worden binnen 10 seconden');
+            }
+          }, 10000);
+        }
+      }
+    };
+
     initWorker();
+    initOpenCV();
+
     return () => {
       if (workerRef.current) {
         workerRef.current.terminate();
@@ -141,18 +181,94 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     await applyCustomOcrParameters(newSettings);
   };
 
-  // Verwerk een afbeelding voordat OCR wordt uitgevoerd
+  // Verbeterde afbeeldingsverwerking met OpenCV
   const preprocessImage = (canvas) => {
     if (!useImageProcessing) return canvas; // Skip als beeldverwerking uit staat
     
+    try {
+      // Alleen OpenCV gebruiken als het geladen is
+      if (openCvLoaded) {
+        // Canvas naar OpenCV Mat converteren
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const src = cv.matFromImageData(imageData);
+        
+        // Doelmat aanmaken met dezelfde grootte en type
+        const dst = new cv.Mat();
+        
+        // Grayscale conversie
+        cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
+        
+        // Gaussian blur om ruis te verminderen
+        const ksize = new cv.Size(5, 5);
+        cv.GaussianBlur(dst, dst, ksize, 0);
+        
+        // Verschillende verwerkingstechnieken op basis van gebruikersselectie
+        switch (processingTechnique) {
+          case 'adaptive':
+            // Adaptieve threshold voor betere tekst-extractie
+            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+            break;
+          case 'binary':
+            // Eenvoudige binaire threshold
+            cv.threshold(dst, dst, 127, 255, cv.THRESH_BINARY);
+            break;
+          case 'canny':
+            // Canny edge detection voor contouren
+            cv.Canny(dst, dst, 50, 150);
+            break;
+          default:
+            // Standaard adaptieve threshold
+            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+        }
+        
+        // Morphologische operatie (opening) om kleine ruis te verwijderen
+        const M = cv.Mat.ones(3, 3, cv.CV_8U);
+        const anchor = new cv.Point(-1, -1);
+        cv.morphologyEx(dst, dst, cv.MORPH_OPEN, M, anchor, 1);
+        
+        // Terug converteren naar canvas
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = canvas.width;
+        tempCanvas.height = canvas.height;
+        cv.imshow(tempCanvas, dst);
+        
+        // Terug naar originele canvas kopiëren
+        ctx.drawImage(tempCanvas, 0, 0);
+        
+        // Debug afbeelding weergeven indien nodig
+        if (showDebug) {
+          setDebugImage(tempCanvas.toDataURL());
+        }
+        
+        // Geheugen vrijgeven
+        src.delete();
+        dst.delete();
+        M.delete();
+        
+        if (debugImage && showDebug) {
+          // Voor debug doeleinden laten we de originele canvas ongewijzigd
+          return canvas;
+        }
+        
+        return canvas;
+      } else {
+        // Terugvallen op de originele beeldverwerking als OpenCV niet geladen is
+        console.log('OpenCV niet geladen, terugvallen op standaard beeldverwerking');
+        return fallbackImageProcessing(canvas);
+      }
+    } catch (error) {
+      console.error('OpenCV verwerking mislukt:', error);
+      // Terugvallen op de originele beeldverwerking als OpenCV faalt
+      return fallbackImageProcessing(canvas);
+    }
+  };
+  
+  // Fallback beeldverwerking functie zonder OpenCV
+  const fallbackImageProcessing = (canvas) => {
     const ctx = canvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const data = imageData.data;
-    
-    // VERBETERDE BEELDVERWERKING VOOR BREDER KADER
-    // Bij bredere afbeeldingen moet je meer letten op contrast
-    const factor = 3.0; // Hoger contrast voor betere cijferherkenning in breder kader
-    const intercept = 128 * (1 - factor);
     
     // Bereken gemiddelde helderheid om adaptieve threshold te bepalen
     let totalBrightness = 0;
@@ -165,8 +281,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     // Bepaal een dynamische threshold op basis van de helderheid
     const threshold = avgBrightness > 128 ? 140 : 120;
     
+    // VERBETERDE BEELDVERWERKING VOOR BREDER KADER
+    // Bij bredere afbeeldingen moet je meer letten op contrast
+    const factor = 3.0; // Hoger contrast voor betere cijferherkenning
+    const intercept = 128 * (1 - factor);
+    
     for (let i = 0; i < data.length; i += 4) {
-      // Verbeterde grayscale conversie - standaard formule
+      // Grayscale conversie
       const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
       
       // Contrast aanpassen
@@ -407,23 +528,30 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         mediaStream.getTracks().forEach(track => track.stop());
       }
       
+      // Detecteer of het apparaat een laptop/desktop is (geen mobiel apparaat)
+      const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // Gebruik standaard de frontcamera voor laptops/desktops en achtercamera voor mobiele apparaten
+      let initialFacingMode = isMobileDevice ? cameraFacing : 'user';
+      
       // Probeer gewenste camera te starten
       try {
         const constraints = {
           video: {
-            facingMode: { ideal: cameraFacing },
+            facingMode: { ideal: initialFacingMode },
             width: { ideal: 1280 },
             height: { ideal: 720 }
           }
         };
         
-        console.log(`Probeert camera te starten met facing mode: ${cameraFacing}`);
+        console.log(`Probeert camera te starten met facing mode: ${initialFacingMode}`);
         const stream = await navigator.mediaDevices.getUserMedia(constraints);
         
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           setIsStreaming(true);
           setMediaStream(stream); // Sla stream op voor latere toegang
+          setCameraFacing(initialFacingMode); // Update de camera-richting state met wat daadwerkelijk gebruikt wordt
           
           // Controleer of de camera een flitser/torch heeft
           const videoTrack = stream.getVideoTracks()[0];
@@ -435,16 +563,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             setHasTorch(hasFlash || false);
             console.log(`Camera heeft flitser: ${hasFlash ? 'JA' : 'NEE'}`);
-            setScanFeedback(`${cameraFacing === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
+            setScanFeedback(`${initialFacingMode === 'environment' ? 'Achter' : 'Voor'}camera actief${hasFlash ? ' (flitser beschikbaar)' : ''}`);
           } else {
             setHasTorch(false);
           }
         }
       } catch (primaryError) {
-        console.log(`Kan camera met facing mode '${cameraFacing}' niet gebruiken:`, primaryError);
+        console.log(`Kan camera met facing mode '${initialFacingMode}' niet gebruiken:`, primaryError);
         
         // Als de gewenste camera niet werkt, probeer dan de andere
-        const alternateFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+        const alternateFacing = initialFacingMode === 'environment' ? 'user' : 'environment';
         
         try {
           const alternateConstraints = {
@@ -764,7 +892,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   // Render de UI voor camera-modus met scan-kader
   const renderCamera = () => {
     return (
-      <>
+      <div className="camera-container relative w-full h-full">
         {/* Gedetecteerd nummer boven camerabeeld */}
         {detectedNumber && (
           <div className="mb-4 text-center p-3 bg-gray-100 rounded-lg shadow-md w-full max-w-md">
@@ -840,424 +968,147 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 style={{
                   width: `${scanFrame.width}px`,
                   height: `${scanFrame.height}px`,
-                  boxShadow: '0 0 0 2000px rgba(0, 0, 0, 0.3)',
-                  borderColor: isProcessing ? 'rgba(239, 68, 68, 0.8)' : 'rgba(59, 130, 246, 0.8)'
+                  borderColor: 'rgba(59, 130, 246, 0.8)'
                 }}
               >
-                {/* Hoekmarkeringen voor betere visuele indicatie van scangebied */}
-                <div className="absolute top-0 left-0 w-3 h-3 border-t-4 border-l-4 border-white"></div>
-                <div className="absolute top-0 right-0 w-3 h-3 border-t-4 border-r-4 border-white"></div>
-                <div className="absolute bottom-0 left-0 w-3 h-3 border-b-4 border-l-4 border-white"></div>
-                <div className="absolute bottom-0 right-0 w-3 h-3 border-b-4 border-r-4 border-white"></div>
-                
-                <div className="w-full h-full flex items-center justify-center">
-                  <span className="text-white drop-shadow-lg text-sm text-center px-2">
-                    {isProcessing ? (
-                      <>Scanning<span className="animate-pulse">...</span></>
-                    ) : (
-                      <>
-                         <br/> 
-                        <small></small>
-                      </>
-                    )}
-                  </span>
-                </div>
+                {/* Horizontale scanline animatie */}
+                <div 
+                  className="absolute left-0 right-0 h-0.5 bg-blue-500 z-10"
+                  style={{
+                    top: `${(isPaused ? 50 : (Math.sin(Date.now() / 600) * 0.5 + 0.5) * 100)}%`,
+                    boxShadow: '0 0 8px rgba(59, 130, 246, 0.8)',
+                    transition: isPaused ? 'none' : 'top 0.3s ease-out'
+                  }}
+                ></div>
               </div>
             </div>
           )}
           
-          {/* Status indicator voor scannen */}
-          {isStreaming && (
-            <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-70 text-white p-2 rounded">
-              <div className="flex items-center">
-                {isProcessing && (
-                  <div className="animate-pulse w-3 h-3 bg-red-500 rounded-full mr-2"></div>
-                )}
-                <span>{scanFeedback || "Wachten op camera..."}</span>
-              </div>
-            </div>
-          )}
-          
-          {/* Vinkje of Kruis rechtsonder in camerabeeld */}
-          {isValidNumber !== null && detectedNumber && (
-            <div className="absolute bottom-16 right-4">
-              {isValidNumber ? (
-                <div className="text-green-500 text-6xl drop-shadow-lg">✓</div>
-              ) : (
-                <div className="text-red-500 text-6xl drop-shadow-lg">✗</div>
-              )}
+          {/* Feedback voor gebruiker */}
+          {scanFeedback && (
+            <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-70 text-white p-2 rounded-md text-sm text-center">
+              {scanFeedback}
             </div>
           )}
         </div>
         
-        {/* Zoom schuifbalk */}
-        {isStreaming && (
-          <div className="w-full max-w-md mb-4 px-3">
-            <div className="flex items-center justify-between mb-1">
-              <span className="text-xs">Uitzoomen</span>
-              <span className="text-xs font-semibold">{Math.round(zoomLevel * 100)}%</span>
-              <span className="text-xs">Inzoomen</span>
-            </div>
-            <div className="flex items-center">
-              <input
-                type="range"
-                min="1.0"
-                max="3.0"
-                step="0.1"
-                value={zoomLevel}
-                onChange={handleZoomChange}
-                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                aria-label="Zoom niveau"
-              />
-            </div>
-            {/* Visuele indicator voor optimaal zoomniveau */}
-            <div className="w-full h-4 mt-1 relative">
-              <div className="absolute top-0 left-1/4 right-1/4 h-1 bg-gray-300 rounded-full"></div>
-              <div 
-                className="absolute top-0 h-1 bg-green-500 rounded-full transition-all duration-300"
-                style={{
-                  left: '40%',
-                  right: '40%',
-                  opacity: zoomLevel >= 1.8 && zoomLevel <= 2.2 ? 1 : 0.3
-                }}
-              ></div>
-              <div 
-                className="absolute top-0 left-1/2 w-4 h-4 bg-white border-2 rounded-full -ml-2 -mt-1.5 transition-all duration-300"
-                style={{
-                  borderColor: zoomLevel >= 1.8 && zoomLevel <= 2.2 ? '#10b981' : '#d1d5db',
-                  transform: `translateX(${(zoomLevel - 1) * 100}px)`
-                }}
-              ></div>
-              <div className="flex justify-between px-1 mt-1.5 text-[10px] text-gray-500">
-                <span>1.0x</span>
-                <span className="text-green-600 font-semibold">1.8-2.2x (optimaal)</span>
-                <span>3.0x</span>
+        {/* UI voor geavanceerde instellingen */}
+        {advancedOcrVisible && (
+          <div className="advanced-settings bg-gray-800 text-white p-3 rounded-lg mb-4 shadow-lg">
+            <h3 className="text-center font-semibold mb-2">Geavanceerde instellingen</h3>
+            
+            <div className="flex flex-col space-y-2">
+              {/* OCR kwaliteit selector */}
+              <div className="setting-group">
+                <label className="text-sm">OCR kwaliteit:</label>
+                <div className="flex justify-between space-x-2">
+                  <button 
+                    onClick={() => setOcrQuality('fast')}
+                    className={`px-2 py-1 text-xs rounded ${ocrQuality === 'fast' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                  >
+                    Snel
+                  </button>
+                  <button 
+                    onClick={() => setOcrQuality('balanced')}
+                    className={`px-2 py-1 text-xs rounded ${ocrQuality === 'balanced' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                  >
+                    Gebalanceerd
+                  </button>
+                  <button 
+                    onClick={() => setOcrQuality('accurate')}
+                    className={`px-2 py-1 text-xs rounded ${ocrQuality === 'accurate' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                  >
+                    Nauwkeurig
+                  </button>
+                </div>
               </div>
-            </div>
-          </div>
-        )}
-        
-        {/* Geavanceerde opties (voor problemen oplossen) */}
-        {isStreaming && (
-          <div className="w-full max-w-md mb-4 px-3">
-            <details className="bg-gray-100 p-2 rounded-lg text-sm">
-              <summary className="font-medium cursor-pointer">OCR-hulp opties</summary>
-              <div className="mt-2 space-y-2">
-                <div className="flex items-center">
-                  <input
-                    type="checkbox"
-                    id="useImageProcessing"
-                    checked={useImageProcessing}
-                    onChange={() => setUseImageProcessing(!useImageProcessing)}
-                    className="mr-2 h-4 w-4"
-                  />
-                  <label htmlFor="useImageProcessing">
-                    Beeldverwerking {useImageProcessing ? 'AAN' : 'UIT'}
-                  </label>
+              
+              {/* OpenCV voorverwerking selector */}
+              <div className="setting-group">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm">Beeldverwerking:</label>
+                  <div className="flex items-center">
+                    <input 
+                      type="checkbox"
+                      id="imageProcessingToggle"
+                      checked={useImageProcessing}
+                      onChange={() => setUseImageProcessing(!useImageProcessing)}
+                      className="mr-1"
+                    />
+                    <label htmlFor="imageProcessingToggle" className="text-xs">Actief</label>
+                  </div>
                 </div>
                 
+                {useImageProcessing && (
+                  <div className="mt-1">
+                    <div className="text-xs text-gray-300 mb-1">
+                      Voorverwerkingstechniek:
+                      {!openCvLoaded && <span className="ml-1 text-yellow-400">(OpenCV wordt geladen...)</span>}
+                    </div>
+                    <div className="flex justify-between space-x-1">
+                      <button 
+                        onClick={() => setProcessingTechnique('adaptive')}
+                        className={`px-2 py-1 text-xs rounded ${processingTechnique === 'adaptive' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        disabled={!openCvLoaded}
+                      >
+                        Adaptief
+                      </button>
+                      <button 
+                        onClick={() => setProcessingTechnique('binary')}
+                        className={`px-2 py-1 text-xs rounded ${processingTechnique === 'binary' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        disabled={!openCvLoaded}
+                      >
+                        Binair
+                      </button>
+                      <button 
+                        onClick={() => setProcessingTechnique('canny')}
+                        className={`px-2 py-1 text-xs rounded ${processingTechnique === 'canny' ? 'bg-blue-600' : 'bg-gray-600'}`}
+                        disabled={!openCvLoaded}
+                      >
+                        Contouren
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Debug optie */}
+              <div className="flex items-center justify-between">
+                <label className="text-sm">Debug modus:</label>
                 <div className="flex items-center">
-                  <input
+                  <input 
                     type="checkbox"
-                    id="showDebug"
+                    id="debugToggle"
                     checked={showDebug}
                     onChange={() => setShowDebug(!showDebug)}
-                    className="mr-2 h-4 w-4"
+                    className="mr-1"
                   />
-                  <label htmlFor="showDebug">
-                    Debug weergave {showDebug ? 'AAN' : 'UIT'}
-                  </label>
-                </div>
-                
-                <div className="mt-3">
-                  <label className="block mb-1 font-medium">OCR kwaliteit (snelheid/nauwkeurigheid):</label>
-                  <div className="grid grid-cols-3 gap-1">
-                    <button
-                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'fast' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-                      onClick={() => {
-                        setOcrQuality('fast');
-                        updateOcrParameters();
-                      }}
-                    >
-                      Snel
-                    </button>
-                    <button
-                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'balanced' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-                      onClick={() => {
-                        setOcrQuality('balanced');
-                        updateOcrParameters();
-                      }}
-                    >
-                      Gebalanceerd
-                    </button>
-                    <button
-                      className={`px-2 py-1 text-xs rounded ${ocrQuality === 'accurate' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
-                      onClick={() => {
-                        setOcrQuality('accurate'); 
-                        updateOcrParameters();
-                      }}
-                    >
-                      Nauwkeurig
-                    </button>
-                  </div>
-                  <p className="text-xs text-gray-600 mt-1 mb-3">
-                    Nauwkeuriger OCR kost meer tijd maar kan beter werken bij lastige nummers
-                  </p>
-                  
-                  {/* Toggle voor geavanceerde OCR-instellingen */}
-                  <div 
-                    className="flex items-center justify-between cursor-pointer px-3 py-2 bg-gray-200 rounded hover:bg-gray-300"
-                    onClick={() => setAdvancedOcrVisible(!advancedOcrVisible)}
-                  >
-                    <span className="font-medium text-sm">Geavanceerde OCR-instellingen</span>
-                    <span className="text-xs">{advancedOcrVisible ? '▼' : '▶'}</span>
-                  </div>
-                  
-                  {/* Geavanceerde OCR-instellingen */}
-                  {advancedOcrVisible && (
-                    <div className="mt-2 bg-gray-100 p-3 rounded-lg space-y-4 text-sm">
-                      <div>
-                        <h4 className="font-semibold mb-2 text-blue-800">Algemene OCR-instellingen</h4>
-                        
-                        {/* Paginasegmentatie modus */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            Paginasegmentatie Modus: <span className="text-blue-600">{ocrSettings.pagesegMode}</span>
-                          </label>
-                          <div className="flex text-xs text-gray-600 mb-1 justify-between">
-                            <span>Blok tekst</span>
-                            <span>Eén regel</span>
-                            <span>Eén woord</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="1"
-                            max="13"
-                            step="1"
-                            value={ocrSettings.pagesegMode}
-                            onChange={(e) => updateOcrSetting('pagesegMode', parseInt(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            6 = Blok tekst (nauwkeuriger) / 7 = Eén regel / 8 = Eén woord
-                          </div>
-                        </div>
-                        
-                        {/* Engine modus */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            OCR Engine Modus: <span className="text-blue-600">{ocrSettings.engineMode}</span>
-                          </label>
-                          <div className="flex text-xs text-gray-600 mb-1 justify-between">
-                            <span>Legacy + LSTM</span>
-                            <span>Alleen LSTM</span>
-                          </div>
-                          <input
-                            type="range"
-                            min="2"
-                            max="3"
-                            step="1"
-                            value={ocrSettings.engineMode}
-                            onChange={(e) => updateOcrSetting('engineMode', parseInt(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            2 = Legacy + LSTM (nauwkeuriger) / 3 = Alleen LSTM (sneller)
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <h4 className="font-semibold mb-2 text-blue-800">Tekstherkenning Parameters</h4>
-                        
-                        {/* Binary toggles voor tekstherkenning */}
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="heavyNr"
-                              checked={ocrSettings.heavyNr}
-                              onChange={(e) => updateOcrSetting('heavyNr', e.target.checked)}
-                              className="mr-2 h-4 w-4"
-                            />
-                            <label htmlFor="heavyNr" className="text-xs">
-                              Heavy NR
-                            </label>
-                          </div>
-                          
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="numericMode"
-                              checked={ocrSettings.numericMode}
-                              onChange={(e) => updateOcrSetting('numericMode', e.target.checked)}
-                              className="mr-2 h-4 w-4"
-                            />
-                            <label htmlFor="numericMode" className="text-xs">
-                              Numeric Mode
-                            </label>
-                          </div>
-                          
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="preserveSpaces"
-                              checked={ocrSettings.preserveSpaces}
-                              onChange={(e) => updateOcrSetting('preserveSpaces', e.target.checked)}
-                              className="mr-2 h-4 w-4"
-                            />
-                            <label htmlFor="preserveSpaces" className="text-xs">
-                              Spaties behouden
-                            </label>
-                          </div>
-                          
-                          <div className="flex items-center">
-                            <input
-                              type="checkbox"
-                              id="doInvert"
-                              checked={ocrSettings.doInvert}
-                              onChange={(e) => updateOcrSetting('doInvert', e.target.checked)}
-                              className="mr-2 h-4 w-4"
-                            />
-                            <label htmlFor="doInvert" className="text-xs">
-                              Inverteer beeld
-                            </label>
-                          </div>
-                        </div>
-                        
-                        {/* Min Line Size */}
-                        <div className="mt-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            Min Line Size: <span className="text-blue-600">{ocrSettings.minLinesize.toFixed(1)}</span>
-                          </label>
-                          <input
-                            type="range"
-                            min="1"
-                            max="5"
-                            step="0.1"
-                            value={ocrSettings.minLinesize}
-                            onChange={(e) => updateOcrSetting('minLinesize', parseFloat(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <h4 className="font-semibold mb-2 text-blue-800">LSTM Parameters</h4>
-                        
-                        {/* LSTM Choice Mode */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            LSTM Choice Mode: <span className="text-blue-600">{ocrSettings.lstmChoiceMode}</span>
-                          </label>
-                          <input
-                            type="range"
-                            min="0"
-                            max="3"
-                            step="1"
-                            value={ocrSettings.lstmChoiceMode}
-                            onChange={(e) => updateOcrSetting('lstmChoiceMode', parseInt(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            0 = Standaard / 1 = Snel / 2 = Betere kwaliteit
-                          </div>
-                        </div>
-                        
-                        {/* LSTM Iterations */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            LSTM Iteraties: <span className="text-blue-600">{ocrSettings.lstmIterations}</span>
-                          </label>
-                          <input
-                            type="range"
-                            min="5"
-                            max="25"
-                            step="1"
-                            value={ocrSettings.lstmIterations}
-                            onChange={(e) => updateOcrSetting('lstmIterations', parseInt(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                          <div className="text-[10px] text-gray-500 mt-1">
-                            Hoger = nauwkeuriger maar langzamer (aanbevolen: 10-15)
-                          </div>
-                        </div>
-                      </div>
-                      
-                      <div>
-                        <h4 className="font-semibold mb-2 text-blue-800">Kwaliteit Parameters</h4>
-                        
-                        {/* Kwaliteitsrating */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            Quality Rating: <span className="text-blue-600">{ocrSettings.goodQualityRating.toFixed(2)}</span>
-                          </label>
-                          <input
-                            type="range"
-                            min="0.8"
-                            max="1.0"
-                            step="0.01"
-                            value={ocrSettings.goodQualityRating}
-                            onChange={(e) => updateOcrSetting('goodQualityRating', parseFloat(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                        </div>
-                        
-                        {/* Min X Height */}
-                        <div className="mb-3">
-                          <label className="block mb-1 text-sm font-medium">
-                            Min X Height: <span className="text-blue-600">{ocrSettings.minXheight}</span>
-                          </label>
-                          <input
-                            type="range"
-                            min="5"
-                            max="15"
-                            step="1"
-                            value={ocrSettings.minXheight}
-                            onChange={(e) => updateOcrSetting('minXheight', parseInt(e.target.value))}
-                            className="w-full h-2 bg-gray-300 rounded-lg appearance-none cursor-pointer accent-blue-500"
-                          />
-                        </div>
-                        
-                        {/* Reset knop */}
-                        <button
-                          onClick={() => {
-                            // Zet alle instellingen terug naar standaardwaarden
-                            const defaultSettings = {
-                              pagesegMode: 6,
-                              engineMode: 2,
-                              heavyNr: true,
-                              minLinesize: 2.5,
-                              numericMode: true,
-                              preserveSpaces: false,
-                              lstmChoiceMode: 2,
-                              lstmIterations: 15,
-                              oldXheight: false,
-                              forcePropWords: false,
-                              doInvert: false,
-                              goodQualityRating: 0.98,
-                              minSlope: 0.414,
-                              maxSlope: 0.414,
-                              minXheight: 8,
-                              maxOutlineChildren: 40,
-                            };
-                            setOcrSettings(defaultSettings);
-                            applyCustomOcrParameters(defaultSettings);
-                          }}
-                          className="w-full px-2 py-1 bg-red-500 text-white rounded-lg text-sm mt-3"
-                        >
-                          Reset alle OCR-instellingen
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <label htmlFor="debugToggle" className="text-xs">Tonen</label>
                 </div>
               </div>
-            </details>
+            </div>
           </div>
         )}
         
-        <div className="flex space-x-4 mb-6">
+        {/* Zoom control */}
+        <div className="mb-4">
+          <label htmlFor="zoomSlider" className="block text-sm font-medium text-gray-700 mb-1">
+            Zoom: {Math.round(zoomLevel * 100)}%
+          </label>
+          <input
+            id="zoomSlider"
+            type="range"
+            min="1.0"
+            max="3.0"
+            step="0.1"
+            value={zoomLevel}
+            onChange={handleZoomChange}
+            className="w-full"
+          />
+        </div>
+        
+        {/* Cameraknoppen en bestaande UI */}
+        <div className="flex justify-between mb-4">
           {!isStreaming ? (
             <button
               onClick={startCamera}
@@ -1275,13 +1126,33 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           )}
           
           <button
+            onClick={() => setAdvancedOcrVisible(!advancedOcrVisible)}
+            className={`px-4 py-2 ${advancedOcrVisible ? 'bg-blue-600' : 'bg-gray-500'} text-white rounded-lg`}
+          >
+            {advancedOcrVisible ? 'Verberg instellingen' : 'Toon instellingen'}
+          </button>
+          
+          <button
             onClick={switchToManualMode}
             className="px-4 py-2 bg-green-500 text-white rounded-lg"
           >
             Handmatig invoeren
           </button>
         </div>
-      </>
+        
+        {/* Weergave van de scanknop tijdens streamen */}
+        {isStreaming && (
+          <div className="flex justify-center">
+            <button
+              className="p-3 bg-blue-600 rounded-full shadow-lg mb-4"
+              onClick={captureImage}
+              disabled={isProcessing}
+            >
+              <div className="w-12 h-12 rounded-full border-4 border-white"></div>
+            </button>
+          </div>
+        )}
+      </div>
     );
   };
 
