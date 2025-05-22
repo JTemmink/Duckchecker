@@ -5,16 +5,16 @@ export async function loadDuckNumbers() {
     
     let response;
     try {
-      response = await fetch('/Ducknumbers.csv');
+      response = await fetch('/ducknumbers.csv');
       // Als de status niet ok is, gooi een error zodat we de fallback kunnen proberen
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
     } catch (fetchError) {
-      console.warn('Kon Ducknumbers.csv niet laden vanuit public map:', fetchError);
+      console.warn('Kon ducknumbers.csv niet laden vanuit public map:', fetchError);
       // Probeer fallback met relatief pad
       console.log('Proberen met alternatief pad...');
-      response = await fetch('Ducknumbers.csv');
+      response = await fetch('ducknumbers.csv');
       
       if (!response.ok) {
         throw new Error(`Ook fallback fetch mislukt! status: ${response.status}`);
