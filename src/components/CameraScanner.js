@@ -1559,9 +1559,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     
     // Als dit alleen een debug-capture is, sla dan de rest van de OCR-verwerking over
     if (!isDebugCapture) {
-    setIsProcessing(true);
+      setIsProcessing(true);
       processingTimeRef.current = new Date().getTime(); // Sla het tijdstip op waarop de verwerking start
-    setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
+      setScanFeedback(verificationInProgress ? 'Nummer verifiëren...' : 'Verwerken...');
     }
     
     // Veiligheidstimer om isProcessing te resetten als verwerking vastloopt
@@ -1577,10 +1577,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     }
     
     try {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    
-    if (video && canvas) {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      
+      if (video && canvas) {
         const context = canvas.getContext('2d', { willReadFrequently: true });
         
         // Pas canvas grootte aan voor optimale OCR met hogere pixeldichtheid
@@ -1588,55 +1588,55 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         canvas.width = scanFrame.width * scanFrame.pixelDensity;
         canvas.height = scanFrame.height * scanFrame.pixelDensity;
       
-      // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
-      // Perfect rekening houdend met zoomniveau
-      
-      // 1. Bepaal de werkelijke afmetingen van het videoframe
-      const videoWidth = video.videoWidth;
-      const videoHeight = video.videoHeight;
-      
-      // 2. Bereken het middelpunt van de video
-      const centerX = videoWidth / 2;
-      const centerY = videoHeight / 2;
-      
-      // VERBETERDE OPLOSSING: Gescheiden zoom voor weergave en uitsnijdgebied
-      // We hebben nu twee zoominstellingen:
-      // 1. zoomLevel: Beïnvloedt de visuele weergave van de video via CSS transform (0.2-3.0)
-      // 2. cropZoomLevel: Beïnvloedt alleen de grootte van het uitgesneden gebied (0.2-4.0)
-      
-      // De basisgrootte van de uitsnede is scanFrame.width x scanFrame.height
-      // We passen dit aan op basis van het cropZoomLevel (uitsnedezoom)
-      // - Bij cropZoomLevel=1 nemen we het standaard gebied
-      // - Bij cropZoomLevel=2 nemen we een half zo groot gebied (meer detail)
-      // - Bij cropZoomLevel=0.5 nemen we een dubbel zo groot gebied (minder detail, meer context)
-      // - Bij cropZoomLevel=0.2 nemen we een vijf keer zo groot gebied (veel minder detail, veel meer context)
-      
-      // Voor waarden < 1.0 maken we het uitsnijdgebied groter
-      // Voor waarden > 1.0 maken we het uitsnijdgebied kleiner
-      const cropWidth = scanFrame.width / cropZoomLevel;
-      const cropHeight = scanFrame.height / cropZoomLevel;
-      
-      // Debug info
-      console.log(`Camera zoom: ${zoomLevel}, Uitsnede zoom: ${cropZoomLevel}`);
-      console.log(`Uitsnijdgebied: ${cropWidth.toFixed(1)}x${cropHeight.toFixed(1)} pixels`);
-      
-      // Bereken de coördinaten voor het uitsnijden vanuit het midden
-      // Bij inzoomen nemen we een kleiner centraal gebied
-      const frameX = centerX - (cropWidth / 2);
-      const frameY = centerY - (cropHeight / 2);
-      
-      // Trek alleen het gedeelte binnen het kader op de canvas
-      // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
-      context.drawImage(
-        video,                // bron
-        frameX, frameY,       // beginpunt uitsnede in bronafbeelding
-        cropWidth, cropHeight,  // grootte uitsnede, schaalt mee met zoomniveau
-        0, 0,                 // beginpunt op canvas
-        canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
-      );
-      
-      // Maak een kopie van originele afbeelding voor debug
-      if (showDebug) {
+        // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
+        // Perfect rekening houdend met zoomniveau
+        
+        // 1. Bepaal de werkelijke afmetingen van het videoframe
+        const videoWidth = video.videoWidth;
+        const videoHeight = video.videoHeight;
+        
+        // 2. Bereken het middelpunt van de video
+        const centerX = videoWidth / 2;
+        const centerY = videoHeight / 2;
+        
+        // VERBETERDE OPLOSSING: Gescheiden zoom voor weergave en uitsnijdgebied
+        // We hebben nu twee zoominstellingen:
+        // 1. zoomLevel: Beïnvloedt de visuele weergave van de video via CSS transform (0.2-3.0)
+        // 2. cropZoomLevel: Beïnvloedt alleen de grootte van het uitgesneden gebied (0.2-4.0)
+        
+        // De basisgrootte van de uitsnede is scanFrame.width x scanFrame.height
+        // We passen dit aan op basis van het cropZoomLevel (uitsnedezoom)
+        // - Bij cropZoomLevel=1 nemen we het standaard gebied
+        // - Bij cropZoomLevel=2 nemen we een half zo groot gebied (meer detail)
+        // - Bij cropZoomLevel=0.5 nemen we een dubbel zo groot gebied (minder detail, meer context)
+        // - Bij cropZoomLevel=0.2 nemen we een vijf keer zo groot gebied (veel minder detail, veel meer context)
+        
+        // Voor waarden < 1.0 maken we het uitsnijdgebied groter
+        // Voor waarden > 1.0 maken we het uitsnijdgebied kleiner
+        const cropWidth = scanFrame.width / cropZoomLevel;
+        const cropHeight = scanFrame.height / cropZoomLevel;
+        
+        // Debug info
+        console.log(`Camera zoom: ${zoomLevel}, Uitsnede zoom: ${cropZoomLevel}`);
+        console.log(`Uitsnijdgebied: ${cropWidth.toFixed(1)}x${cropHeight.toFixed(1)} pixels`);
+        
+        // Bereken de coördinaten voor het uitsnijden vanuit het midden
+        // Bij inzoomen nemen we een kleiner centraal gebied
+        const frameX = centerX - (cropWidth / 2);
+        const frameY = centerY - (cropHeight / 2);
+        
+        // Trek alleen het gedeelte binnen het kader op de canvas
+        // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
+        context.drawImage(
+          video,                // bron
+          frameX, frameY,       // beginpunt uitsnede in bronafbeelding
+          cropWidth, cropHeight,  // grootte uitsnede, schaalt mee met zoomniveau
+          0, 0,                 // beginpunt op canvas
+          canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
+        );
+        
+        // Maak een kopie van originele afbeelding voor debug
+        if (showDebug) {
           try {
             // Direct het originele canvas opslaan als data URL
             const originalUrl = canvas.toDataURL('image/png');
@@ -1647,25 +1647,25 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           } catch (e) {
             console.error("Fout bij opslaan originele debug afbeelding:", e);
           }
-      }
-      
-      // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
-      if (!skipPreprocessing) {
-        preprocessImage(canvas);
-      } else {
-        console.log("Voorbewerking overgeslagen, direct naar OCR");
-        // Als we debug aan hebben, toon dan de onbewerkte afbeelding als processingresultaat
-        if (showDebug) {
-          try {
-            const originalUrl = canvas.toDataURL('image/png');
-            setDebugProcessedImage("" + originalUrl);
-          } catch (e) {
-            console.error("Fout bij opslaan van onbewerkte afbeelding voor debug:", e);
+        }
+        
+        // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
+        if (!skipPreprocessing) {
+          preprocessImage(canvas);
+        } else {
+          console.log("Voorbewerking overgeslagen, direct naar OCR");
+          // Als we debug aan hebben, toon dan de onbewerkte afbeelding als processingresultaat
+          if (showDebug) {
+            try {
+              const originalUrl = canvas.toDataURL('image/png');
+              setDebugProcessedImage("" + originalUrl);
+            } catch (e) {
+              console.error("Fout bij opslaan van onbewerkte afbeelding voor debug:", e);
+            }
           }
         }
-      }
-      
-      // Maak een kopie van het geoptimaliseerde beeld
+        
+        // Maak een kopie van het geoptimaliseerde beeld
         if (showDebug) {
           try {
             // Direct het verwerkte canvas opslaan als data URL
@@ -1686,169 +1686,173 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         }
         
         try {
-      // Verbeterde invoer naar OCR met onderscheid tussen preprocessed en direct
-      let imageSource;
-      if (skipPreprocessing) {
-        // Direct de canvas naar OCR sturen zonder enige voorbewerking
-        imageSource = canvas.toDataURL('image/png');
-        console.log("OCR krijgt de onbewerkte afbeelding (voorbewerking overgeslagen)");
-      } else {
-        // Normale verwerking (met of zonder OpenCV)
-        imageSource = canvas.toDataURL('image/png');
-        console.log("OCR krijgt de voorbewerkte afbeelding");
-      }
-      
-      // Kies de juiste OCR-engine op basis van de gebruikersinstelling
-      let data;
-      if (ocrEngine === 'gocr') {
-        // GOCR verwerking
-        console.log("Verwerken met GOCR engine");
-        data = await processWithGOCR(imageSource);
-      } else if (ocrEngine === 'chatgpt') {
-        // ChatGPT verwerking
-        console.log("Verwerken met ChatGPT engine");
-        data = await processWithChatGPT(imageSource);
-      } else {
-        // Standaard Tesseract verwerking
-        console.log("Verwerken met Tesseract engine");
-        const result = await workerRef.current.recognize(imageSource);
-        data = result.data;
-      }
+          // Verbeterde invoer naar OCR met onderscheid tussen preprocessed en direct
+          let imageSource;
+          if (skipPreprocessing) {
+            // Direct de canvas naar OCR sturen zonder enige voorbewerking
+            imageSource = canvas.toDataURL('image/png');
+            console.log("OCR krijgt de onbewerkte afbeelding (voorbewerking overgeslagen)");
+          } else {
+            // Normale verwerking (met of zonder OpenCV)
+            imageSource = canvas.toDataURL('image/png');
+            console.log("OCR krijgt de voorbewerkte afbeelding");
+          }
+          
+          // Kies de juiste OCR-engine op basis van de gebruikersinstelling
+          let data;
+          if (ocrEngine === 'gocr') {
+            // GOCR verwerking
+            console.log("Verwerken met GOCR engine");
+            data = await processWithGOCR(imageSource);
+          } else if (ocrEngine === 'chatgpt') {
+            // ChatGPT verwerking
+            console.log("Verwerken met ChatGPT engine");
+            data = await processWithChatGPT(imageSource);
+          } else {
+            // Standaard Tesseract verwerking
+            console.log("Verwerken met Tesseract engine");
+            const result = await workerRef.current.recognize(imageSource);
+            data = result.data;
+          }
           
           // Verdere OCR verwerking - rest van de originele functie
-      const text = data.text.trim();
-      
-      // Debug info
-      console.log("OCR tekst:", text);
-      console.log("OCR confidence:", data.confidence);
-      
-      // Verbeterde nummerextractie
-      // Eerst zoeken naar alle getallen in de gedetecteerde tekst
-      const numbersFound = text.match(/\d+/g);
-      console.log("Gevonden getallen:", numbersFound);
-      
-      if (numbersFound && numbersFound.length > 0) {
-        // Filter en pad getallen zodat ze exact 4 cijfers hebben
-        const filteredNumbers = numbersFound.map(num => {
-          if (num.length > 4) {
-            // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
-            return num.slice(-4);
-          } else if (num.length < 4) {
-            // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
-            return num.padStart(4, '0');
-          }
-          return num; // Al 4 cijfers
-        });
-        
-        console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
-        
-        let bestNumber = '';
-        
-        // Zoek naar exacte 4-cijferige getallen (prioriteit)
-        const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
-        if (fourDigitNumbers.length > 0) {
-          bestNumber = fourDigitNumbers[0];
-        } else {
-          // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
-          // neem het langste beschikbare getal
-          let maxLength = 0;
-          for (const num of filteredNumbers) {
-            if (num.length > maxLength) {
-              maxLength = num.length;
-              bestNumber = num;
-            }
-          }
-        }
-        
-        // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
-        const number = bestNumber;
-        
-        // Als we bezig zijn met verificatie
-        if (verificationInProgress && lastDetectedNumber) {
-          if (number === lastDetectedNumber) {
-            // Nummer is geverifieerd, verwerk het nu
-            setDetectedNumber(number);
-            
-            // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
-            const isValid = validateNumber(number, duckNumbers);
-            setIsValidNumber(isValid);
-            
-            setScanFeedback(`Nummer geverifieerd: ${number}`);
-            
-            if (onNumberDetected) {
-              onNumberDetected(number, isValid);
-            }
-            
-            // Reset verificatie status
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
-            
-                // Pauzeer het scannen voor 5 seconden, maar zorg dat debug beelden nog werken
-            setIsPaused(true);
-                console.log("Scannen gepauzeerd voor 5 seconden na succesvolle detectie van " + number);
-                
-                // Verbeterde feedback met validatie informatie
-                const validatieBericht = isValid 
-                  ? `✓ GELDIG: ${number} komt voor in de lijst!` 
-                  : `✗ ONGELDIG: ${number} komt NIET voor in de lijst!`;
-                
-                setScanFeedback(validatieBericht);
-                
-                // In debug modus blijven scannen voor afbeeldingen, maar niet verwerken
-                if (showDebug) {
-                  setScanFeedback(`${validatieBericht} Debug modus actief, scannen gaat door voor debug-beelden.`);
-                }
-                
-            // Verlengde pauze (5 seconden) na detectie zodat gebruiker het resultaat kan zien
-            setTimeout(() => {
-              setIsPaused(false);
-                  setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
-                  processingTimeRef.current = null; // Reset processing time reference
-                  setScanFeedback('Scannen hervat...');
-                  console.log("Scannen hervat na pauze");
-                  
-                  // Na 2 seconden de scan feedback updaten
-                  setTimeout(() => {
-                    if (isStreaming) {
-                      setScanFeedback('Camera scant nu...');
-                    }
-            }, 2000);
-            }, 5000);
-          } else {
-            // Getallen komen niet overeen, reset en probeer opnieuw
-            setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
-            setVerificationInProgress(false);
-            setLastDetectedNumber(null);
-                setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
-                processingTimeRef.current = null; // Reset processing time reference
-          }
-        } else {
-          // Start verificatieproces
-          setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren...`);
-          setLastDetectedNumber(number);
-          setVerificationInProgress(true);
+          const text = data.text.trim();
           
-          // Onmiddellijk nog een keer scannen voor verificatie
-          setTimeout(() => {
-            setIsProcessing(false); // Reset processing flag voor de tweede scan
-                processingTimeRef.current = null; // Reset processing time reference
-            captureImage(); // Roep zichzelf opnieuw aan voor verificatie
-          }, 300); // Kleine vertraging om een andere frame te krijgen
-        }
-      } else {
-        // Geen getallen gedetecteerd
-        if (verificationInProgress) {
-          setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
-          setVerificationInProgress(false);
-          setLastDetectedNumber(null);
-              setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
-              processingTimeRef.current = null; // Reset processing time reference
-        } else {
-          setDetectedNumber('');
-          setIsValidNumber(null);
-          setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
-              setIsProcessing(false); // Reset processing flag om verder te kunnen scannen
-              processingTimeRef.current = null; // Reset processing time reference
+          // Debug info
+          console.log("OCR tekst:", text);
+          console.log("OCR confidence:", data.confidence);
+          
+          // Verbeterde nummerextractie
+          // Eerst zoeken naar alle getallen in de gedetecteerde tekst
+          const numbersFound = text.match(/\d+/g);
+          console.log("Gevonden getallen:", numbersFound);
+          
+          if (numbersFound && numbersFound.length > 0) {
+            // Filter en pad getallen zodat ze exact 4 cijfers hebben
+            const filteredNumbers = numbersFound.map(num => {
+              if (num.length > 4) {
+                // Als het getal langer is dan 4 cijfers, neem alleen de laatste 4
+                return num.slice(-4);
+              } else if (num.length < 4) {
+                // Als het getal korter is dan 4 cijfers, vul aan met voorloopnullen
+                return num.padStart(4, '0');
+              }
+              return num; // Al 4 cijfers
+            });
+            
+            console.log("Gefilterde getallen (exact 4 cijfers):", filteredNumbers);
+            
+            let bestNumber = '';
+            
+            // Zoek naar exacte 4-cijferige getallen (prioriteit)
+            const fourDigitNumbers = filteredNumbers.filter(num => num.length === 4);
+            if (fourDigitNumbers.length > 0) {
+              bestNumber = fourDigitNumbers[0];
+            } else {
+              // Als er geen 4-cijferige getallen zijn (wat niet zou moeten gebeuren), 
+              // neem het langste beschikbare getal
+              let maxLength = 0;
+              for (const num of filteredNumbers) {
+                if (num.length > maxLength) {
+                  maxLength = num.length;
+                  bestNumber = num;
+                }
+              }
+            }
+            
+            // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
+            const number = bestNumber;
+            
+            // NIEUWE LOGICA: Directe validatie bij hoge confidence
+            const highConfidence = data.confidence > 80;
+            
+            // Bij hoge confidence (>80%) of als we ChatGPT gebruiken, direct valideren zonder verificatiestap
+            if (highConfidence || ocrEngine === 'chatgpt' || (verificationInProgress && number === lastDetectedNumber)) {
+              console.log(`Hoge betrouwbaarheid (${data.confidence}%) of ChatGPT OCR, direct valideren...`);
+              
+              // Stel het gedetecteerde nummer in
+              setDetectedNumber(number);
+              
+              // Controleer of het nummer in de lijst voorkomt (verbeterde validatie)
+              const isValid = validateNumber(number, duckNumbers);
+              setIsValidNumber(isValid);
+              
+              // Duidelijke feedback over de validatiestatus
+              const validatieBericht = isValid 
+                ? `✓ GELDIG: ${number} komt voor in de lijst!` 
+                : `✗ ONGELDIG: ${number} komt NIET voor in de lijst!`;
+              
+              setScanFeedback(validatieBericht);
+              
+              // In debug modus, voeg extra info toe
+              if (showDebug) {
+                setScanFeedback(`${validatieBericht} (${Math.round(data.confidence)}% zeker)`);
+              }
+              
+              // Notificeer parent component
+              if (onNumberDetected) {
+                onNumberDetected(number, isValid);
+              }
+              
+              // Resetlogica en pauze
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
+              setIsPaused(true);
+              
+              console.log("Scannen gepauzeerd voor 5 seconden na detectie van " + number);
+              
+              // Verlengde pauze (5 seconden) na detectie zodat gebruiker het resultaat kan zien
+              setTimeout(() => {
+                setIsPaused(false);
+                setIsProcessing(false);
+                processingTimeRef.current = null;
+                setScanFeedback('Scannen hervat...');
+                
+                // Na 2 seconden de scan feedback updaten
+                setTimeout(() => {
+                  if (isStreaming) {
+                    setScanFeedback('Camera scant nu...');
+                  }
+                }, 2000);
+              }, 5000);
+            }
+            // Bij lagere confidence, gebruik verificatiestap
+            else if (!verificationInProgress) {
+              // Start verificatieproces
+              setScanFeedback(`Mogelijk nummer gevonden: ${number}. Verifiëren... (${Math.round(data.confidence)}% zeker)`);
+              setLastDetectedNumber(number);
+              setVerificationInProgress(true);
+              
+              // Onmiddellijk nog een keer scannen voor verificatie
+              setTimeout(() => {
+                setIsProcessing(false);
+                processingTimeRef.current = null;
+                captureImage(); // Roep zichzelf opnieuw aan voor verificatie
+              }, 300); // Kleine vertraging om een andere frame te krijgen
+            }
+            // Als verificatie mislukt
+            else {
+              // Getallen komen niet overeen, reset en probeer opnieuw
+              setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
+              setIsProcessing(false);
+              processingTimeRef.current = null;
+            }
+          } else {
+            // Geen getallen gedetecteerd
+            if (verificationInProgress) {
+              setScanFeedback('Verificatie mislukt, geen nummers gevonden. Probeer opnieuw...');
+              setVerificationInProgress(false);
+              setLastDetectedNumber(null);
+              setIsProcessing(false);
+              processingTimeRef.current = null;
+            } else {
+              setDetectedNumber('');
+              setIsValidNumber(null);
+              setScanFeedback('Geen nummers gedetecteerd. Scannen gaat door...');
+              setIsProcessing(false);
+              processingTimeRef.current = null;
             }
           }
         } catch (ocrError) {
@@ -1856,12 +1860,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           setScanFeedback('OCR-fout opgetreden. Probeer opnieuw...');
           setIsProcessing(false);
           processingTimeRef.current = null; // Reset processing time reference
-      }
-    } else {
-      setIsProcessing(false);
+        }
+      } else {
+        setIsProcessing(false);
         processingTimeRef.current = null; // Reset processing time reference
-      setScanFeedback('Camera niet beschikbaar');
-    }
+        setScanFeedback('Camera niet beschikbaar');
+      }
     } catch (error) {
       console.error('Fout tijdens scannen:', error);
       setScanFeedback('Fout tijdens scannen. Probeer opnieuw...');
@@ -1873,7 +1877,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         clearTimeout(processingTimeout);
       }
     }
-  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, preprocessImage, scanFrame.width, scanFrame.height, scanFrame.pixelDensity, validateNumber]);
+  }, [duckNumbers, isProcessing, isStreaming, onNumberDetected, verificationInProgress, lastDetectedNumber, showDebug, useImageProcessing, zoomLevel, preprocessImage, scanFrame.width, scanFrame.height, scanFrame.pixelDensity, validateNumber, ocrEngine]);
 
   // Render de UI voor camera-modus met scan-kader
   const renderCamera = () => {
