@@ -11,26 +11,41 @@ export default function Home() {
   const [lastDetectedNumber, setLastDetectedNumber] = useState<string | null>(null);
   const [lastValidationResult, setLastValidationResult] = useState<boolean | null>(null);
 
-  useEffect(() => {
-    async function fetchData() {
-      try {
-        setIsLoading(true);
-        const numbers = await loadDuckNumbers();
-        setDuckNumbers(numbers);
-      } catch (err) {
-        setError('Fout bij het laden van de nummers. Vernieuw de pagina om het opnieuw te proberen.');
-        console.error('Fout:', err);
-      } finally {
-        setIsLoading(false);
-      }
+  // Functie om de eendnummers te laden
+  const fetchDuckNumbers = async () => {
+    try {
+      // Gebruik een tijdelijke variabele om de huidige lijst bij te houden
+      const currentNumbers = [...duckNumbers];
+      
+      const numbers = await loadDuckNumbers();
+      setDuckNumbers(numbers);
+      setError(null);
+    } catch (err) {
+      setError('Fout bij het laden van de nummers. Vernieuw de pagina om het opnieuw te proberen.');
+      console.error('Fout:', err);
+    } finally {
+      setIsLoading(false);
     }
+  };
 
-    fetchData();
+  useEffect(() => {
+    fetchDuckNumbers();
   }, []);
 
   const handleNumberDetected = (number: string, isValid: boolean) => {
     setLastDetectedNumber(number);
     setLastValidationResult(isValid);
+  };
+
+  // Functie om data te verversen na toevoegen van een nieuw nummer
+  const handleRefreshNeeded = async () => {
+    try {
+      // Laad alleen de nieuwe nummers, zonder de isLoading state te wijzigen
+      const numbers = await loadDuckNumbers();
+      setDuckNumbers(numbers);
+    } catch (err) {
+      console.error('Fout bij het verversen van nummers:', err);
+    }
   };
 
   return (
@@ -48,6 +63,7 @@ export default function Home() {
         <LandingPage 
           duckNumbers={duckNumbers} 
           onNumberDetected={handleNumberDetected}
+          onRefreshNeeded={handleRefreshNeeded}
         />
       )}
     </main>
