@@ -2936,14 +2936,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             <span className="text-3xl font-mono font-bold">{manualInput || '____'}</span>
           </div>
           
-          {/* Feedback over geldigheid */}
-          {isValidNumber !== null && (
-            <div className={`mt-2 p-2 rounded ${isValidNumber ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-              {isValidNumber 
-                ? "✓ Dit nummer komt voor in de lijst!" 
-                : "✗ Dit nummer komt niet voor in de lijst."}
-            </div>
-          )}
+          {/* Feedback over geldigheid - altijd zichtbare container met vaste hoogte */}
+          <div className="h-16 mt-2 flex items-center justify-center">
+            {isValidNumber !== null ? (
+              <div className={`w-full p-2 rounded ${isValidNumber ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                {isValidNumber 
+                  ? "✓ Dit nummer komt voor in de lijst!" 
+                  : "✗ Dit nummer komt niet voor in de lijst."}
+              </div>
+            ) : null}
+          </div>
         </div>
         
         {/* Numeriek toetsenbord */}
