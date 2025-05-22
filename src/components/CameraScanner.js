@@ -109,7 +109,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     // Converteer het gedetecteerde nummer naar een string en verwijder whitespace
     const cleanDetected = detected.toString().trim();
     
-    // Zorg dat we het exacte pad cijfers hebben - pad met nullen indien nodig
+    // Controleer of het ingevoerde getal minder dan 4 cijfers heeft bij handmatige invoer
+    // In dat geval moeten we het aanvullen met voorloopnullen
     const paddedDetected = cleanDetected.padStart(4, '0');
     
     // Debug informatie over de validatienummers
@@ -118,17 +119,29 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     console.log(`Eerste paar geldige nummers:`, validNumbers.slice(0, 5));
     console.log(`Type van validNumbers: ${typeof validNumbers}, Is Array: ${Array.isArray(validNumbers)}`);
     
+    // STRIKTERE VALIDATIE: We staan alleen exacte 4-cijferige matches toe
+    // Als de ingevoerde waarde minder dan 4 cijfers heeft, eisen we dat het na padding
+    // exact overeenkomt met een eendnummer in de lijst
+    
+    // Als cleanDetected minder dan 4 cijfers heeft, dan is dit waarschijnlijk handmatige invoer
+    // We willen strikte validatie: het moet exact een 4-cijferig eendnummer zijn na padding
+    const requiresExactMatch = cleanDetected.length < 4;
+    
     // Verschillende formaten proberen voor de vergelijking
     // Dit helpt bij problemen met string vs. number conversies
     let isValid = false;
     
-    // 1. Directe vergelijking
-    if (validNumbers.includes(cleanDetected) || validNumbers.includes(paddedDetected)) {
-      console.log(`Match gevonden door directe vergelijking`);
+    // Arrays om validatienummers consistent te houden
+    const stringValidNumbers = validNumbers.map(n => n.toString().trim());
+    const paddedValidNumbers = validNumbers.map(n => n.toString().trim().padStart(4, '0'));
+    
+    // Controleer of het gepaddeerde of originele getal in de lijst voorkomt
+    if (paddedValidNumbers.includes(paddedDetected) || (cleanDetected.length === 4 && stringValidNumbers.includes(cleanDetected))) {
+      console.log(`Match gevonden: ${paddedDetected} is een geldig eendnummer`);
       isValid = true;
     } 
-    // 2. Vergelijken na nummer-conversie (voor als validNumbers getallen bevat)
-    else if (paddedDetected.length === 4 && /^\d+$/.test(paddedDetected)) {
+    // Als het een numerieke vergelijking vereist
+    else if (cleanDetected.length === 4 || paddedDetected.length === 4) {
       const numericValue = parseInt(paddedDetected, 10);
       // Als validNumbers getallen bevat, controleer op numerieke match
       const hasNumericMatch = validNumbers.some(vn => {
@@ -137,29 +150,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       });
       
       if (hasNumericMatch) {
-        console.log(`Match gevonden na nummer-conversie`);
-        isValid = true;
-      }
-    }
-    
-    // 3. Vergelijking na stringconversie (case-sensitive)
-    if (!isValid) {
-      const stringValidNumbers = validNumbers.map(n => n.toString().trim());
-      if (stringValidNumbers.includes(cleanDetected) || stringValidNumbers.includes(paddedDetected)) {
-        console.log(`Match gevonden na string-conversie`);
-        isValid = true;
-      }
-    }
-    
-    // 4. Case-insensitive vergelijking (voor het geval er letters in zitten)
-    if (!isValid) {
-      const lowerDetected = paddedDetected.toLowerCase();
-      const hasLowerMatch = validNumbers.some(vn => 
-        vn.toString().toLowerCase().trim() === lowerDetected
-      );
-      
-      if (hasLowerMatch) {
-        console.log(`Match gevonden na case-insensitive vergelijking`);
+        console.log(`Match gevonden na nummer-conversie: ${numericValue}`);
         isValid = true;
       }
     }
