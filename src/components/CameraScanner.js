@@ -20,6 +20,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(1.0);
+  const [cropZoomLevel, setCropZoomLevel] = useState(1.0); // Nieuwe zoom-instelling voor uitsnede
   const [showDebug, setShowDebug] = useState(false);
   const [debugImage, setDebugImage] = useState(null);
   const [debugProcessedImage, setDebugProcessedImage] = useState(null);
@@ -179,13 +180,39 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     }
   };
 
-  // Wijzig het zoomniveau
+  // Wijzig het camera zoomniveau
   const handleZoomChange = (e) => {
     const newZoom = parseFloat(e.target.value);
     setZoomLevel(newZoom);
     
     // Update feedback om te laten zien wat er gebeurt
-    setScanFeedback(`Zoom niveau: ${Math.round(newZoom * 100)}%`);
+    setScanFeedback(`Camera zoom: ${Math.round(newZoom * 100)}% - Beeld vergroot`);
+    
+    // Reset na korte tijd
+    setTimeout(() => {
+      if (isStreaming) {
+        setScanFeedback('Camera actief, scannen start...');
+      }
+    }, 1000);
+  };
+  
+  // Wijzig het uitsnede zoomniveau
+  const handleCropZoomChange = (e) => {
+    const newCropZoom = parseFloat(e.target.value);
+    setCropZoomLevel(newCropZoom);
+    
+    // Update feedback om te laten zien wat er gebeurt
+    let feedbackText = `Uitsnede zoom: ${Math.round(newCropZoom * 100)}%`;
+    
+    if (newCropZoom < 1) {
+      feedbackText += ` - Breder gebied (meer context, minder detail)`;
+    } else if (newCropZoom > 1) {
+      feedbackText += ` - Kleiner gebied (meer detail, minder context)`;
+    } else {
+      feedbackText += ` - Standaard gebied`;
+    }
+    
+    setScanFeedback(feedbackText);
     
     // Reset na korte tijd
     setTimeout(() => {
@@ -1442,15 +1469,29 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       const centerX = videoWidth / 2;
       const centerY = videoHeight / 2;
       
-      // 3. Bij inzoomen willen we juist een kleiner gebied uitsnijden (meer detail)
-      // Het visuele kader wordt kleiner bij inzoomen, dus dat gebied moeten we uit de video halen
-      const cropWidth = scanFrame.width / zoomLevel;
-      const cropHeight = scanFrame.height / zoomLevel;
+      // VERBETERDE OPLOSSING: Gescheiden zoom voor weergave en uitsnijdgebied
+      // We hebben nu twee zoominstellingen:
+      // 1. zoomLevel: Beïnvloedt de visuele weergave van de video via CSS transform (0.2-3.0)
+      // 2. cropZoomLevel: Beïnvloedt alleen de grootte van het uitgesneden gebied (0.2-4.0)
+      
+      // De basisgrootte van de uitsnede is scanFrame.width x scanFrame.height
+      // We passen dit aan op basis van het cropZoomLevel (uitsnedezoom)
+      // - Bij cropZoomLevel=1 nemen we het standaard gebied
+      // - Bij cropZoomLevel=2 nemen we een half zo groot gebied (meer detail)
+      // - Bij cropZoomLevel=0.5 nemen we een dubbel zo groot gebied (minder detail, meer context)
+      // - Bij cropZoomLevel=0.2 nemen we een vijf keer zo groot gebied (veel minder detail, veel meer context)
+      
+      // Voor waarden < 1.0 maken we het uitsnijdgebied groter
+      // Voor waarden > 1.0 maken we het uitsnijdgebied kleiner
+      const cropWidth = scanFrame.width / cropZoomLevel;
+      const cropHeight = scanFrame.height / cropZoomLevel;
       
       // Debug info
-      console.log(`Zoom: ${zoomLevel}, Crop area: ${cropWidth}x${cropHeight}`);
+      console.log(`Camera zoom: ${zoomLevel}, Uitsnede zoom: ${cropZoomLevel}`);
+      console.log(`Uitsnijdgebied: ${cropWidth.toFixed(1)}x${cropHeight.toFixed(1)} pixels`);
       
-      // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
+      // Bereken de coördinaten voor het uitsnijden vanuit het midden
+      // Bij inzoomen nemen we een kleiner centraal gebied
       const frameX = centerX - (cropWidth / 2);
       const frameY = centerY - (cropHeight / 2);
       
@@ -1770,16 +1811,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
-          {/* Scan-kader overlay met duidelijkere instructies - aangepast aan zoomniveau */}
+          {/* Scan-kader overlay - vaste grootte ongeacht zoom */}
           {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
               <div 
                 className="border-4 rounded-md bg-transparent relative"
                 style={{
-                  // Pas de grootte van het kader aan aan het zoomniveau
-                  // Bij inzoomen (zoomLevel > 1) wordt het kader kleiner om het exacte uitsnijdgebied te tonen
-                  width: `${scanFrame.width / zoomLevel}px`,
-                  height: `${scanFrame.height / zoomLevel}px`,
+                  // Gebruik vaste afmetingen voor het kader
+                  // Dit zorgt dat het kader altijd overeenkomt met wat er wordt uitgesneden
+                  width: `${scanFrame.width}px`,
+                  height: `${scanFrame.height}px`,
                   borderColor: 'rgba(59, 130, 246, 0.8)'
                 }}
               >
@@ -2431,21 +2472,41 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           </div>
         )}
         
-        {/* Zoom control */}
-        <div className="mb-4">
+        {/* Camera Zoom control */}
+        <div className="mb-2">
           <label htmlFor="zoomSlider" className="block text-sm font-medium text-gray-700 mb-1">
-            Zoom: {Math.round(zoomLevel * 100)}%
+            Camera zoom: {Math.round(zoomLevel * 100)}% {zoomLevel < 1 ? "(uitgezoomd)" : "(ingezoomd)"}
           </label>
           <input
             id="zoomSlider"
             type="range"
-            min="1.0"
+            min="0.2"
             max="3.0"
             step="0.1"
             value={zoomLevel}
             onChange={handleZoomChange}
             className="w-full"
           />
+        </div>
+        
+        {/* Uitsnede Zoom control */}
+        <div className="mb-4">
+          <label htmlFor="cropZoomSlider" className="block text-sm font-medium text-gray-700 mb-1">
+            Uitsnede zoom: {Math.round(cropZoomLevel * 100)}% {cropZoomLevel < 1 ? "(wijder gebied)" : cropZoomLevel > 1 ? "(smaller gebied)" : ""}
+          </label>
+          <input
+            id="cropZoomSlider"
+            type="range"
+            min="0.2"
+            max="4.0"
+            step="0.1"
+            value={cropZoomLevel}
+            onChange={handleCropZoomChange}
+            className="w-full"
+          />
+          <div className="text-xs text-gray-500 mt-1">
+            &lt; 100% = breder gebied (uitzoomen), &gt; 100% = smaller gebied (inzoomen)
+          </div>
         </div>
         
         {/* Cameraknoppen en bestaande UI */}
