@@ -35,8 +35,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
   const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
   const [skipPreprocessing, setSkipPreprocessing] = useState(false); // Optie om voorbewerking over te slaan
-  const [easterEggEnabled, setEasterEggEnabled] = useState(false); // Easter egg functie aan/uit
-  const audioRef = useRef(null); // Referentie naar audio element
   const [extraProcessingOptions, setExtraProcessingOptions] = useState({
     contrastLevel: 1.5,       // Contrastniveau (1.0 = normaal, 2.0 = hoog contrast)
     brightnessAdjust: 10,     // Helderheidsaanpassing (-50 tot 50)
@@ -159,45 +157,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     return isValid;
   };
 
-  // Helper functie om een willekeurig eendgeluid af te spelen (moet vóór validateAndProcessNumber komen)
-  const playRandomDuckSound = () => {
-    if (!audioRef.current || !easterEggEnabled) return;
-    
-    // Lijst van beschikbare geluiden
-    const duckSounds = [
-      '/geluiden/donald-duck-1-104310.mp3',
-      '/geluiden/075176_duck-quack-40345.mp3',
-      '/geluiden/quacking-sound-for-duck-96140.mp3',
-      '/geluiden/duck-quack-112941.mp3',
-      '/geluiden/duck-quacking-37392.mp3'
-    ];
-    
-    // Kies een willekeurig geluid
-    const randomSound = duckSounds[Math.floor(Math.random() * duckSounds.length)];
-    
-    try {
-      // Stel het geluid in en speel het af
-      audioRef.current.src = randomSound;
-      audioRef.current.play()
-        .catch(error => console.error("Kon eendgeluid niet afspelen:", error));
-      
-      console.log(`Easter egg geluid afgespeeld: ${randomSound}`);
-    } catch (error) {
-      console.error("Fout bij afspelen easter egg geluid:", error);
-    }
-  };
-  
-  // Functie voor het valideren van nummers, gebruiken bij zowel camera als handmatige invoer
+  // Functie voor het valideren van nummers
   const validateAndProcessNumber = (number) => {
     // Valideer tegen de database
     const isValid = validateNumber(number, duckNumbers);
     setIsValidNumber(isValid);
-    
-    // Als het nummer geldig is en de easter egg is actief, speel dan een geluid af
-    if (isValid && easterEggEnabled) {
-      playRandomDuckSound();
-    }
-    
     return isValid;
   };
 
@@ -3307,21 +3271,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     }
   };
 
-  // Voeg een audio element toe (dit zal verborgen zijn) voor het easter egg
-  useEffect(() => {
-    // Maak een audio element aan voor de easter egg functie
-    const audioElement = document.createElement('audio');
-    audioElement.style.display = 'none'; // Maak het element onzichtbaar
-    document.body.appendChild(audioElement);
-    audioRef.current = audioElement;
-    
-    // Cleanup functie om het audio element te verwijderen
-    return () => {
-      if (audioRef.current) {
-        document.body.removeChild(audioRef.current);
-      }
-    };
-  }, []);
+
 
 
 
@@ -3333,40 +3283,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     const newInput = manualInput + digit;
     setManualInput(newInput);
     
-    // Easter egg activeren met 9999
-    if (newInput === '9999') {
-      setEasterEggEnabled(true);
-      setScanFeedback('🐤 Easter Egg geactiveerd! Geniet van de eendgeluiden 🐤');
-      setTimeout(() => setScanFeedback(''), 3000);
-      console.log("Easter egg functie geactiveerd");
-      return;
-    }
-    
-    // Easter egg deactiveren met 8888
-    if (newInput === '8888') {
-      setEasterEggEnabled(false);
-      setScanFeedback('Easter Egg gedeactiveerd');
-      setTimeout(() => setScanFeedback(''), 3000);
-      console.log("Easter egg functie gedeactiveerd");
-      return;
-    }
-    
     // Controleer het nummer direct na elke invoer
     setDetectedNumber(newInput);
     
-    // Valideer pas wanneer we 4 cijfers hebben of als dit een getal is dat met 0 begint
-    // (dan valideren we ook onmiddellijk bij 1, 2 of 3 cijfers)
+    // Validatie
     const isValid = validateNumber(newInput, duckNumbers);
     setIsValidNumber(isValid);
     
     console.log(`Handmatige invoer: "${newInput}", Geldig: ${isValid}`);
     
-    // Speel een willekeurig eendgeluid af bij een geldig nummer als easter egg actief is
-    if (isValid && easterEggEnabled) {
-      playRandomDuckSound();
-    }
-    
-    // Rapporteer ook aan de parent component
+    // Rapporteer aan parent component
     if (onNumberDetected) {
       onNumberDetected(newInput, isValid);
     }
