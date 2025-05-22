@@ -32,10 +32,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [hasTorch, setHasTorch] = useState(false); // Of het apparaat een flitser heeft
   const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
   const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
+  const [skipPreprocessing, setSkipPreprocessing] = useState(false); // Optie om voorbewerking over te slaan
   const [extraProcessingOptions, setExtraProcessingOptions] = useState({
     contrastLevel: 1.5,       // Contrastniveau (1.0 = normaal, 2.0 = hoog contrast)
     brightnessAdjust: 10,     // Helderheidsaanpassing (-50 tot 50)
-    gammaCorrection: 0,       // Gamma correctie (0 = standaard per gebruikerswens, <1 donkerder, >1 lichter)
+    gammaCorrection: 0.5,     // Gamma correctie (0.5 = standaard per gebruikerswens, <1 donkerder, >1 lichter)
     invertColors: false,      // Kleuren inverteren
     rotationAngle: 0,         // Rotatie in graden
     applySharpening: true,    // Verscherping toepassen
@@ -1431,7 +1432,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         canvas.height = scanFrame.height * scanFrame.pixelDensity;
       
       // VERBETERDE BEREKENING: Exact wat in het kader zichtbaar is uitsnijden
-      // rekening houdend met zoomniveau
+      // Perfect rekening houdend met zoomniveau
       
       // 1. Bepaal de werkelijke afmetingen van het videoframe
       const videoWidth = video.videoWidth;
@@ -1441,24 +1442,26 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       const centerX = videoWidth / 2;
       const centerY = videoHeight / 2;
       
-      // 3. Bereken de schaal voor het uitsnijden, rekening houdend met zoom
-      // Dit zorgt dat we precies het juiste gebied uitsnijden dat in het kader zichtbaar is
-      const scaledWidth = scanFrame.width * zoomLevel;
-      const scaledHeight = scanFrame.height * zoomLevel;
+      // 3. Bij inzoomen willen we juist een kleiner gebied uitsnijden (meer detail)
+      // Het visuele kader wordt kleiner bij inzoomen, dus dat gebied moeten we uit de video halen
+      const cropWidth = scanFrame.width / zoomLevel;
+      const cropHeight = scanFrame.height / zoomLevel;
+      
+      // Debug info
+      console.log(`Zoom: ${zoomLevel}, Crop area: ${cropWidth}x${cropHeight}`);
       
       // 4. Bereken de coördinaten voor het uitsnijden vanuit het midden
-      // Dit zorgt dat we het juiste gebied pakken, ongeacht het zoomniveau
-      const frameX = centerX - (scaledWidth / 2);
-      const frameY = centerY - (scaledHeight / 2);
+      const frameX = centerX - (cropWidth / 2);
+      const frameY = centerY - (cropHeight / 2);
       
       // Trek alleen het gedeelte binnen het kader op de canvas
-        // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
+      // We maken gebruik van hogere resolutie door de pixeldichtheid te verdubbelen
       context.drawImage(
         video,                // bron
-        frameX, frameY,       // beginpunt uitsnede in bronafbeelding, gecorrigeerd voor zoom
-        scaledWidth, scaledHeight,  // grootte uitsnede, gecorrigeerd voor zoom
+        frameX, frameY,       // beginpunt uitsnede in bronafbeelding
+        cropWidth, cropHeight,  // grootte uitsnede, schaalt mee met zoomniveau
         0, 0,                 // beginpunt op canvas
-          canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
+        canvas.width, canvas.height // grootte op canvas (verhoogd met pixelDensity)
       );
       
       // Maak een kopie van originele afbeelding voor debug
@@ -1475,8 +1478,21 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           }
       }
       
-      // Pas beeldverbetering toe
-      preprocessImage(canvas);
+      // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
+      if (!skipPreprocessing) {
+        preprocessImage(canvas);
+      } else {
+        console.log("Voorbewerking overgeslagen, direct naar OCR");
+        // Als we debug aan hebben, toon dan de onbewerkte afbeelding als processingresultaat
+        if (showDebug) {
+          try {
+            const originalUrl = canvas.toDataURL('image/png');
+            setDebugProcessedImage("" + originalUrl);
+          } catch (e) {
+            console.error("Fout bij opslaan van onbewerkte afbeelding voor debug:", e);
+          }
+        }
+      }
       
       // Maak een kopie van het geoptimaliseerde beeld
         if (showDebug) {
@@ -1499,9 +1515,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         }
         
         try {
-      const { data } = await workerRef.current.recognize(
-            useImageProcessing ? canvas.toDataURL('image/png') : canvas.toDataURL('image/png')
-      );
+      // Verbeterde invoer naar OCR met onderscheid tussen preprocessed en direct
+      let imageSource;
+      if (skipPreprocessing) {
+        // Direct de canvas naar OCR sturen zonder enige voorbewerking
+        imageSource = canvas.toDataURL('image/png');
+        console.log("OCR krijgt de onbewerkte afbeelding (voorbewerking overgeslagen)");
+      } else {
+        // Normale verwerking (met of zonder OpenCV)
+        imageSource = canvas.toDataURL('image/png');
+        console.log("OCR krijgt de voorbewerkte afbeelding");
+      }
+      
+      const { data } = await workerRef.current.recognize(imageSource);
           
           // Verdere OCR verwerking - rest van de originele functie
       const text = data.text.trim();
@@ -1600,7 +1626,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     if (isStreaming) {
                       setScanFeedback('Camera scant nu...');
                     }
-                  }, 2000);
+            }, 2000);
             }, 5000);
           } else {
             // Getallen komen niet overeen, reset en probeer opnieuw
@@ -1744,14 +1770,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           {/* Verborgen canvas voor beeldverwerking */}
           <canvas ref={canvasRef} className="hidden" />
           
-          {/* Scan-kader overlay met duidelijkere instructies */}
+          {/* Scan-kader overlay met duidelijkere instructies - aangepast aan zoomniveau */}
           {isStreaming && (
             <div className="absolute top-0 left-0 right-0 bottom-0 flex items-center justify-center pointer-events-none">
               <div 
                 className="border-4 rounded-md bg-transparent relative"
                 style={{
-                  width: `${scanFrame.width}px`,
-                  height: `${scanFrame.height}px`,
+                  // Pas de grootte van het kader aan aan het zoomniveau
+                  // Bij inzoomen (zoomLevel > 1) wordt het kader kleiner om het exacte uitsnijdgebied te tonen
+                  width: `${scanFrame.width / zoomLevel}px`,
+                  height: `${scanFrame.height / zoomLevel}px`,
                   borderColor: 'rgba(59, 130, 246, 0.8)'
                 }}
               >
@@ -1775,7 +1803,16 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               scanFeedback.includes('ONGELDIG:') ? 'bg-red-600 text-white' : 
               'bg-black bg-opacity-70 text-white'
             }`} style={{ fontSize: scanFeedback.includes('GELDIG:') || scanFeedback.includes('ONGELDIG:') ? '1.1rem' : '0.875rem' }}>
-              {scanFeedback}
+              {skipPreprocessing && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ? 
+                '⚠️ DIRECT NAAR OCR: ' + scanFeedback : 
+                scanFeedback}
+            </div>
+          )}
+          
+          {/* Indicator voor direct-naar-OCR modus */}
+          {skipPreprocessing && isStreaming && (
+            <div className="absolute top-2 right-2 bg-yellow-500 text-black px-2 py-1 rounded-md text-xs font-bold animate-pulse">
+              DIRECT NAAR OCR
             </div>
           )}
         </div>
@@ -1941,6 +1978,23 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 </div>
                 </div>
                 
+                {/* Optie om voorbewerking helemaal over te slaan */}
+                <div className="flex items-center justify-between mt-1 border-t border-gray-600 pt-1">
+                  <label className="text-sm text-yellow-300">Direct naar OCR:</label>
+                  <div className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id="skipPreprocessingToggle"
+                      checked={skipPreprocessing}
+                      onChange={() => setSkipPreprocessing(!skipPreprocessing)}
+                      className="mr-1"
+                    />
+                    <label htmlFor="skipPreprocessingToggle" className="text-xs">
+                      {skipPreprocessing ? "Ja (geen voorbewerking)" : "Nee (met voorbewerking)"}
+                    </label>
+                  </div>
+                </div>
+                
                 {useImageProcessing && (
                   <div className="mt-1">
                     <div className="text-xs text-gray-300 mb-1">
@@ -2082,7 +2136,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                             <div className="flex justify-between">
                               <label className="text-xs">Gamma: {extraProcessingOptions.gammaCorrection.toFixed(1)}</label>
                               <button 
-                                onClick={() => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: 0}))}
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: 0.5}))}
                                 className="text-xs bg-gray-500 px-1 rounded"
                               >
                                 Reset
