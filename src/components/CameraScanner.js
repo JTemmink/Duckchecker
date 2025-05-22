@@ -93,21 +93,73 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
 
   // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
   const validateNumber = (detected, validNumbers) => {
-    if (!detected || !validNumbers || !validNumbers.length) return false;
+    if (!detected || !validNumbers) {
+      console.log("Validatie gefaald: geen gedetecteerd nummer of validatienummers");
+      return false;
+    }
+    
+    if (!validNumbers.length) {
+      console.warn("Waarschuwing: validatienummers lijst is leeg");
+      return false;
+    }
     
     // Converteer het gedetecteerde nummer naar een string en verwijder whitespace
     const cleanDetected = detected.toString().trim();
     
-    // Debug logging
-    console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
-    console.log(`Eerste paar geldige nummers: ${validNumbers.slice(0,5)}`);
-    
     // Zorg dat we het exacte pad cijfers hebben - pad met nullen indien nodig
     const paddedDetected = cleanDetected.padStart(4, '0');
     
-    // Check of het nummer in de lijst voorkomt (string vergelijking)
-    // Probeer zowel met als zonder padding voor het geval dat
-    const isValid = validNumbers.includes(paddedDetected) || validNumbers.includes(cleanDetected);
+    // Debug informatie over de validatienummers
+    console.log(`Valideren: "${cleanDetected}" (type: ${typeof cleanDetected})`);
+    console.log(`Gepaddeerd nummer: "${paddedDetected}" (type: ${typeof paddedDetected})`);
+    console.log(`Eerste paar geldige nummers:`, validNumbers.slice(0, 5));
+    console.log(`Type van validNumbers: ${typeof validNumbers}, Is Array: ${Array.isArray(validNumbers)}`);
+    
+    // Verschillende formaten proberen voor de vergelijking
+    // Dit helpt bij problemen met string vs. number conversies
+    let isValid = false;
+    
+    // 1. Directe vergelijking
+    if (validNumbers.includes(cleanDetected) || validNumbers.includes(paddedDetected)) {
+      console.log(`Match gevonden door directe vergelijking`);
+      isValid = true;
+    } 
+    // 2. Vergelijken na nummer-conversie (voor als validNumbers getallen bevat)
+    else if (paddedDetected.length === 4 && /^\d+$/.test(paddedDetected)) {
+      const numericValue = parseInt(paddedDetected, 10);
+      // Als validNumbers getallen bevat, controleer op numerieke match
+      const hasNumericMatch = validNumbers.some(vn => {
+        const vnAsNumber = parseInt(vn, 10);
+        return !isNaN(vnAsNumber) && vnAsNumber === numericValue;
+      });
+      
+      if (hasNumericMatch) {
+        console.log(`Match gevonden na nummer-conversie`);
+        isValid = true;
+      }
+    }
+    
+    // 3. Vergelijking na stringconversie (case-sensitive)
+    if (!isValid) {
+      const stringValidNumbers = validNumbers.map(n => n.toString().trim());
+      if (stringValidNumbers.includes(cleanDetected) || stringValidNumbers.includes(paddedDetected)) {
+        console.log(`Match gevonden na string-conversie`);
+        isValid = true;
+      }
+    }
+    
+    // 4. Case-insensitive vergelijking (voor het geval er letters in zitten)
+    if (!isValid) {
+      const lowerDetected = paddedDetected.toLowerCase();
+      const hasLowerMatch = validNumbers.some(vn => 
+        vn.toString().toLowerCase().trim() === lowerDetected
+      );
+      
+      if (hasLowerMatch) {
+        console.log(`Match gevonden na case-insensitive vergelijking`);
+        isValid = true;
+      }
+    }
     
     console.log(`Zoeken naar: "${paddedDetected}" of "${cleanDetected}"`);
     console.log(`In lijst: ${isValid}`);
@@ -696,7 +748,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       if (openCvLoaded) {
         // Canvas naar OpenCV Mat converteren
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const src = cv.matFromImageData(imageData);
         
         // Doelmat aanmaken met dezelfde grootte en type
@@ -744,32 +796,75 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 // Gamma correctie voor betere details in donkere of lichte gebieden
                 // Gebruik LUT (Look-Up Table) voor gamma correctie
                 const gamma = options.gammaCorrection;
-                // We moeten dit voor elk kleurkanaal apart doen in een kleurenafbeelding
-                // Splits de kleurkanalen
-                let bgr = new cv.MatVector();
-                cv.split(dst, bgr);
                 
-                // Pas gamma correctie toe op elk kanaal
-                for (let i = 0; i < 3; i++) {
-                  const lookUpTable = new Uint8Array(256);
-                  for (let j = 0; j < 256; j++) {
-                    lookUpTable[j] = Math.min(255, Math.max(0, Math.pow(j / 255, 1 / gamma) * 255));
+                // Maak lookup table voor gammacorrectie
+                const lookUpTable = new Uint8Array(256);
+                for (let j = 0; j < 256; j++) {
+                  lookUpTable[j] = Math.min(255, Math.max(0, Math.pow(j / 255, 1 / gamma) * 255));
+                }
+                
+                // Controleer of LUT functie bestaat in OpenCV
+                if (typeof cv.LUT === 'function') {
+                  // We moeten dit voor elk kleurkanaal apart doen in een kleurenafbeelding
+                  // Splits de kleurkanalen
+                  let bgr = new cv.MatVector();
+                  cv.split(dst, bgr);
+                  
+                  // Pas gamma correctie toe op elk kanaal
+                  for (let i = 0; i < 3; i++) {
+                    const lookUpTableMat = cv.matFromArray(1, 256, cv.CV_8U, lookUpTable);
+                    cv.LUT(bgr.get(i), lookUpTableMat, bgr.get(i));
+                    lookUpTableMat.delete();
                   }
-                  const lookUpTableMat = cv.matFromArray(1, 256, cv.CV_8U, lookUpTable);
-                  cv.LUT(bgr.get(i), lookUpTableMat, bgr.get(i));
-                  lookUpTableMat.delete();
+                  
+                  // Voeg de kanalen weer samen
+                  cv.merge(bgr, dst);
+                  
+                  // Maak geheugen vrij
+                  for (let i = 0; i < bgr.size(); ++i) {
+                    bgr.get(i).delete();
+                  }
+                  bgr.delete();
+                } else {
+                  // Alternatieve implementatie als LUT niet beschikbaar is
+                  console.log("LUT functie niet beschikbaar, gebruik alternatieve methode voor gamma correctie in kleurenmodus");
+                  
+                  // Pas gamma correctie direct toe op de pixels
+                  for (let y = 0; y < dst.rows; y++) {
+                    for (let x = 0; x < dst.cols; x++) {
+                      // Haal pixel op (BGR formaat)
+                      const pixel = dst.ucharPtr(y, x);
+                      // Pas gamma toe op elke kleurcomponent
+                      pixel[0] = lookUpTable[pixel[0]]; // B
+                      pixel[1] = lookUpTable[pixel[1]]; // G
+                      pixel[2] = lookUpTable[pixel[2]]; // R
+                    }
+                  }
                 }
-                
-                // Voeg de kanalen weer samen
-                cv.merge(bgr, dst);
-                
-                // Maak geheugen vrij
-                for (let i = 0; i < bgr.size(); ++i) {
-                  bgr.get(i).delete();
-                }
-                bgr.delete();
               } catch (error) {
-                console.warn('Gammacorrectie op kleurenbeeld mislukt:', error);
+                console.warn('Gammacorrectie op kleurenbeeld mislukt, terugvallen op alternatieve methode:', error);
+                
+                try {
+                  // Alternatieve methode: Gebruik contrast en helderheid
+                  const gamma = options.gammaCorrection;
+                  // Bereken contrast en helderheid als benadering van gamma
+                  let contrast, brightness;
+                  
+                  if (gamma < 1.0) {
+                    // Donkerder maken (gamma < 1)
+                    contrast = gamma * 0.8;
+                    brightness = -10;
+                  } else {
+                    // Lichter maken (gamma > 1)
+                    contrast = gamma * 0.5;
+                    brightness = 20;
+                  }
+                  
+                  // Pas contrast en helderheid toe als vervanging voor gamma
+                  dst.convertTo(dst, -1, contrast, brightness);
+                } catch (fallbackError) {
+                  console.error('Ook alternatieve gammacorrectie voor kleurenbeeld mislukt:', fallbackError);
+                }
               }
             }
             
@@ -917,15 +1012,67 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             // Gammacorrectie toepassen als waarde niet 1.0 is
             if (adaptiveOptions.gammaCorrection !== 1.0) {
-              // Gamma correctie voor betere details in donkere of lichte gebieden
-              const gamma = adaptiveOptions.gammaCorrection;
-              const lookUpTable = new Uint8Array(256);
-              for (let i = 0; i < 256; i++) {
-                lookUpTable[i] = Math.min(255, Math.max(0, Math.pow(i / 255, 1 / gamma) * 255));
+              try {
+                // Probeer eerst met LUT functie als deze beschikbaar is
+                const gamma = adaptiveOptions.gammaCorrection;
+                const lookUpTable = new Uint8Array(256);
+                for (let i = 0; i < 256; i++) {
+                  lookUpTable[i] = Math.min(255, Math.max(0, Math.pow(i / 255, 1 / gamma) * 255));
+                }
+                
+                // Controleer of LUT functie bestaat, anders alternatieve implementatie gebruiken
+                if (typeof cv.LUT === 'function') {
+                  // Standaard implementatie met LUT functie
+                  const lookUpTableMat = cv.matFromArray(1, 256, cv.CV_8U, lookUpTable);
+                  cv.LUT(dst, lookUpTableMat, dst);
+                  lookUpTableMat.delete();
+                } else {
+                  // Alternatieve implementatie zonder LUT functie
+                  console.log("LUT functie niet beschikbaar, gebruik alternatieve methode voor gamma correctie");
+                  
+                  // Maak een tijdelijke kopie
+                  const tempMat = new cv.Mat();
+                  dst.copyTo(tempMat);
+                  
+                  // Pas gamma correctie direct toe op de pixels
+                  for (let y = 0; y < dst.rows; y++) {
+                    for (let x = 0; x < dst.cols; x++) {
+                      // Haal pixelwaarde op 
+                      const pixel = dst.ucharPtr(y, x);
+                      // Pas gamma toe op de pixel
+                      pixel[0] = lookUpTable[pixel[0]];
+                    }
+                  }
+                  
+                  // Maak geheugen vrij
+                  tempMat.delete();
+                }
+              } catch (error) {
+                console.warn('Gammacorrectie mislukt, terugvallen op alternatieve methode:', error);
+                
+                try {
+                  // Alternatieve methode: Gebruik contrast en helderheid om gamma te simuleren
+                  const gamma = adaptiveOptions.gammaCorrection;
+                  // Bereken contrast en helderheid als benadering van gamma
+                  let contrast, brightness;
+                  
+                  if (gamma < 1.0) {
+                    // Donkerder maken (gamma < 1)
+                    contrast = gamma * 0.8;
+                    brightness = -10;
+                  } else {
+                    // Lichter maken (gamma > 1)
+                    contrast = gamma * 0.5;
+                    brightness = 20;
+                  }
+                  
+                  // Pas contrast en helderheid toe als vervanging voor gamma
+                  dst.convertTo(dst, -1, contrast, brightness);
+                } catch (fallbackError) {
+                  console.error('Ook alternatieve gammacorrectie mislukt:', fallbackError);
+                  // Als alles mislukt, laat de afbeelding ongewijzigd
+                }
               }
-              const lookUpTableMat = cv.matFromArray(1, 256, cv.CV_8U, lookUpTable);
-              cv.LUT(dst, lookUpTableMat, dst);
-              lookUpTableMat.delete();
             }
             
             // Automatische scheefstandcorrectie (deskewing)
