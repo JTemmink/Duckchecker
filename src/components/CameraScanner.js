@@ -2988,10 +2988,15 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       setScanFeedback("Bezig met verzenden naar ChatGPT...");
       
       // Voorbewerk de afbeelding naar 512x512 pixels
+      console.log("Afbeelding omzetten naar 512x512...");
       const resizedImage = await resizeImageTo512(imageSource);
+      console.log("Afbeelding verkleind tot 512x512, lengte:", resizedImage.length);
       
       // API-aanroep via server-route om de API-sleutel te beschermen
+      console.log("API-aanroep voorbereiden...");
+      
       try {
+        console.log("Versturen naar /api/chatgpt-ocr...");
         const response = await fetch('/api/chatgpt-ocr', {
           method: 'POST',
           headers: {
@@ -3000,19 +3005,34 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           body: JSON.stringify({ imageBase64: resizedImage })
         });
         
+        console.log("API-response ontvangen, status:", response.status);
+        
         if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(`API fout: ${errorData.message || response.statusText}`);
+          console.error("API-fout status:", response.status);
+          let errorMessage = `API-fout: ${response.status}`;
+          try {
+            const errorData = await response.json();
+            console.error("API-fout details:", errorData);
+            errorMessage = errorData.message || errorMessage;
+          } catch (jsonError) {
+            console.error("Kon API-fout niet parsen:", jsonError);
+          }
+          throw new Error(errorMessage);
         }
         
         // Verwerk het antwoord
         const data = await response.json();
+        console.log("API-antwoord data:", data);
+        
         const extractedText = data.text.trim();
-        console.log("ChatGPT antwoord:", extractedText);
+        console.log("ChatGPT antwoord tekst:", extractedText);
         
         // Controleer of het antwoord een 4-cijferig getal is
         const numberMatch = extractedText.match(/\d{4}/);
+        console.log("Gevonden getal match:", numberMatch);
+        
         const result = numberMatch ? numberMatch[0] : "";
+        console.log("Geëxtraheerd resultaat:", result || "Geen resultaat");
         
         // Bereken een fictieve confidence score
         const confidence = result.length === 4 ? 0.95 : 0.1;
@@ -3021,9 +3041,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           text: result,
           confidence: confidence
         };
-      } catch (error) {
-        console.error("ChatGPT API-aanroep mislukt:", error);
-        setScanFeedback(`ChatGPT OCR mislukt: ${error.message}`);
+      } catch (apiError) {
+        console.error("ChatGPT API-aanroep mislukt:", apiError);
+        setScanFeedback(`ChatGPT OCR mislukt: ${apiError.message}`);
         
         // Fallback naar eenvoudige tekst
         return {
@@ -3119,6 +3139,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     // Voorkom dubbele verwerking als er al een proces bezig is
     if (isProcessing || !isStreaming) return;
     
+    console.log("ChatGPT foto maken gestart...");
     setScanFeedback('ChatGPT foto maken en verzenden...');
     setIsProcessing(true);
     
@@ -3137,6 +3158,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         const videoWidth = video.videoWidth;
         const videoHeight = video.videoHeight;
         
+        console.log(`Video afmetingen: ${videoWidth}x${videoHeight}`);
+        
         // Bereken het middelpunt van de video
         const centerX = videoWidth / 2;
         const centerY = videoHeight / 2;
@@ -3144,6 +3167,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         // Bereken uitsnijdafmetingen
         const cropWidth = scanFrame.width / cropZoomLevel;
         const cropHeight = scanFrame.height / cropZoomLevel;
+        
+        console.log(`Uitsnijdgebied: ${cropWidth}x${cropHeight} met zoom ${cropZoomLevel}`);
         
         // Bereken de coördinaten voor het uitsnijden vanuit het midden
         const frameX = centerX - (cropWidth / 2);
@@ -3158,11 +3183,14 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           canvas.width, canvas.height
         );
         
+        console.log("Afbeelding uitgesneden naar canvas");
+        
         // Maak een kopie van originele afbeelding voor debug
         if (showDebug) {
           try {
             const originalUrl = canvas.toDataURL('image/png');
             setDebugImage("" + originalUrl);
+            console.log("Debug originele afbeelding ingesteld");
           } catch (e) {
             console.error("Fout bij opslaan originele debug afbeelding:", e);
           }
@@ -3172,6 +3200,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         let processedCanvas = canvas;
         if (!skipPreprocessing) {
           processedCanvas = preprocessImage(canvas);
+          console.log("Afbeelding voorbewerkt");
         } else if (showDebug) {
           try {
             const originalUrl = canvas.toDataURL('image/png');
@@ -3186,6 +3215,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           try {
             const processedUrl = processedCanvas.toDataURL('image/png');
             setDebugProcessedImage("" + processedUrl);
+            console.log("Debug bewerkte afbeelding ingesteld");
           } catch (e) {
             console.error("Fout bij opslaan verwerkte debug afbeelding:", e);
           }
@@ -3193,50 +3223,66 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         
         // Verkrijg afbeelding voor ChatGPT verwerking
         const imageSource = processedCanvas.toDataURL('image/png');
+        console.log("Image source lengte:", imageSource.length);
         
         // Verwerk de afbeelding met ChatGPT
         setScanFeedback('Bezig met verwerken via ChatGPT Vision...');
-        const data = await processWithChatGPT(imageSource);
+        console.log("Start ChatGPT aanroep...");
         
-        // Verwerk het OCR resultaat
-        const text = data.text.trim();
-        console.log("ChatGPT OCR tekst:", text);
-        console.log("ChatGPT OCR confidence:", data.confidence);
-        
-        if (text) {
-          // Valideer het gedetecteerde nummer
-          const isValid = validateNumber(text, duckNumbers);
-          setDetectedNumber(text);
-          setIsValidNumber(isValid);
+        try {
+          const data = await processWithChatGPT(imageSource);
+          console.log("ChatGPT antwoord ontvangen:", data);
           
-          // Feedback over het resultaat
-          const feedbackText = isValid 
-            ? `✓ GELDIG: ${text} komt voor in de lijst!` 
-            : `✗ ONGELDIG: ${text} komt NIET voor in de lijst!`;
-          setScanFeedback(feedbackText);
+          // Verwerk het OCR resultaat
+          const text = data.text.trim();
+          console.log("ChatGPT OCR tekst:", text);
+          console.log("ChatGPT OCR confidence:", data.confidence);
           
-          // Notificeer parent component
-          if (onNumberDetected) {
-            onNumberDetected(text, isValid);
-          }
-          
-          // Pauzeer even voor gebruiker om resultaat te zien
-          setIsPaused(true);
-          setTimeout(() => {
-            setIsPaused(false);
-            setIsProcessing(false);
-            if (isStreaming) {
-              setScanFeedback('Klik op de "Scan met ChatGPT" knop om opnieuw te scannen');
+          if (text) {
+            // Valideer het gedetecteerde nummer
+            console.log("Valideren van nummer:", text);
+            const isValid = validateNumber(text, duckNumbers);
+            console.log("Nummer geldig:", isValid);
+            
+            setDetectedNumber(text);
+            setIsValidNumber(isValid);
+            
+            // Feedback over het resultaat
+            const feedbackText = isValid 
+              ? `✓ GELDIG: ${text} komt voor in de lijst!` 
+              : `✗ ONGELDIG: ${text} komt NIET voor in de lijst!`;
+            setScanFeedback(feedbackText);
+            
+            // Notificeer parent component
+            if (onNumberDetected) {
+              onNumberDetected(text, isValid);
+              console.log("Parent component genotificeerd over resultaat");
             }
-          }, 5000);
-        } else {
-          // Geen tekst gevonden
-          setDetectedNumber('');
-          setIsValidNumber(null);
-          setScanFeedback('Geen cijfers gedetecteerd. Probeer opnieuw.');
+            
+            // Pauzeer even voor gebruiker om resultaat te zien
+            setIsPaused(true);
+            setTimeout(() => {
+              setIsPaused(false);
+              setIsProcessing(false);
+              if (isStreaming) {
+                setScanFeedback('Klik op de "Scan met ChatGPT" knop om opnieuw te scannen');
+              }
+            }, 5000);
+          } else {
+            // Geen tekst gevonden
+            console.log("Geen cijfers gedetecteerd in ChatGPT antwoord");
+            setDetectedNumber('');
+            setIsValidNumber(null);
+            setScanFeedback('Geen cijfers gedetecteerd. Probeer opnieuw.');
+            setIsProcessing(false);
+          }
+        } catch (apiError) {
+          console.error("Fout tijdens ChatGPT API aanroep:", apiError);
+          setScanFeedback(`Fout tijdens ChatGPT verwerking: ${apiError.message}`);
           setIsProcessing(false);
         }
       } else {
+        console.error("Video of canvas referentie ontbreekt");
         setScanFeedback('Camera niet beschikbaar');
         setIsProcessing(false);
       }

@@ -3,17 +3,24 @@
 // waarbij de API-sleutel veilig op de server blijft
 
 export default async function handler(req, res) {
+  console.log("API route chatgpt-ocr aangeroepen");
+  
   // Alleen POST-verzoeken toestaan
   if (req.method !== 'POST') {
+    console.log("Verkeerde methode gebruikt:", req.method);
     return res.status(405).json({ message: 'Alleen POST-methode is toegestaan' });
   }
 
   try {
+    console.log("Request body aanwezig:", !!req.body);
     const { imageBase64 } = req.body;
     
     if (!imageBase64) {
+      console.error("Geen afbeelding ontvangen in request body");
       return res.status(400).json({ message: 'Geen afbeelding ontvangen' });
     }
+    
+    console.log("Afbeelding ontvangen, lengte:", imageBase64.length);
     
     // Haal de API-sleutel op uit de omgevingsvariabelen
     const apiKey = process.env.OPENAI_API_KEY;
@@ -23,7 +30,16 @@ export default async function handler(req, res) {
       return res.status(500).json({ message: 'Server configuratiefout: API-sleutel ontbreekt' });
     }
     
+    console.log("API sleutel gevonden, verzoek naar OpenAI wordt voorbereid");
+    
+    // Controleer of de imageBase64 een geldige data URL is
+    if (!imageBase64.startsWith('data:image')) {
+      console.error("Ongeldige afbeeldingsdata ontvangen");
+      return res.status(400).json({ message: 'Ongeldige afbeeldingsdata' });
+    }
+    
     // Maak het verzoek naar de OpenAI API
+    console.log("OpenAI API aanroepen...");
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -57,6 +73,8 @@ export default async function handler(req, res) {
       })
     });
     
+    console.log("OpenAI API antwoord ontvangen, status:", openaiResponse.status);
+    
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.json();
       console.error('OpenAI API-fout:', errorData);
@@ -66,7 +84,10 @@ export default async function handler(req, res) {
     }
     
     const data = await openaiResponse.json();
+    console.log("OpenAI API resultaat:", data);
+    
     const extractedText = data.choices[0].message.content.trim();
+    console.log("Geëxtraheerde tekst:", extractedText);
     
     // Stuur alleen de geëxtraheerde tekst terug naar de client
     return res.status(200).json({ text: extractedText });
