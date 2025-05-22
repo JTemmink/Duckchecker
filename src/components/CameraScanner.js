@@ -35,7 +35,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [extraProcessingOptions, setExtraProcessingOptions] = useState({
     contrastLevel: 1.5,       // Contrastniveau (1.0 = normaal, 2.0 = hoog contrast)
     brightnessAdjust: 10,     // Helderheidsaanpassing (-50 tot 50)
-    gammaCorrection: 1.0,     // Gamma correctie (1.0 = normaal, <1 donkerder, >1 lichter)
+    gammaCorrection: 0,       // Gamma correctie (0 = standaard per gebruikerswens, <1 donkerder, >1 lichter)
     invertColors: false,      // Kleuren inverteren
     rotationAngle: 0,         // Rotatie in graden
     applySharpening: true,    // Verscherping toepassen
@@ -170,9 +170,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   // Bereken achtergrondkleur voor camera container
   const getCameraContainerClass = () => {
     if (!isValidNumber && detectedNumber) {
-      return "border-2 border-red-500 bg-red-100 bg-opacity-30";
+      return "border-4 border-red-500 bg-red-100 bg-opacity-50"; // Dikkere rand en hogere dekking
     } else if (isValidNumber) {
-      return "border-2 border-green-500 bg-green-100 bg-opacity-30";
+      return "border-4 border-green-500 bg-green-100 bg-opacity-50"; // Dikkere rand en hogere dekking
     } else {
       return "border-2 border-gray-300";
     }
@@ -1571,15 +1571,23 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             setVerificationInProgress(false);
             setLastDetectedNumber(null);
             
-                // Pauzeer het scannen voor 2 seconden, maar zorg dat debug beelden nog werken
+                // Pauzeer het scannen voor 5 seconden, maar zorg dat debug beelden nog werken
             setIsPaused(true);
-                console.log("Scannen gepauzeerd voor 2 seconden na succesvolle detectie van " + number);
+                console.log("Scannen gepauzeerd voor 5 seconden na succesvolle detectie van " + number);
+                
+                // Verbeterde feedback met validatie informatie
+                const validatieBericht = isValid 
+                  ? `✓ GELDIG: ${number} komt voor in de lijst!` 
+                  : `✗ ONGELDIG: ${number} komt NIET voor in de lijst!`;
+                
+                setScanFeedback(validatieBericht);
                 
                 // In debug modus blijven scannen voor afbeeldingen, maar niet verwerken
                 if (showDebug) {
-                  setScanFeedback(`Nummer geverifieerd: ${number}. Debug modus actief, scannen gaat door voor debug-beelden.`);
+                  setScanFeedback(`${validatieBericht} Debug modus actief, scannen gaat door voor debug-beelden.`);
                 }
                 
+            // Verlengde pauze (5 seconden) na detectie zodat gebruiker het resultaat kan zien
             setTimeout(() => {
               setIsPaused(false);
                   setIsProcessing(false); // Zorg dat de processing flag wordt gereset zodat scannen opnieuw start
@@ -1587,13 +1595,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   setScanFeedback('Scannen hervat...');
                   console.log("Scannen hervat na pauze");
                   
-                  // Na 1 seconde de scan feedback updaten
+                  // Na 2 seconden de scan feedback updaten
                   setTimeout(() => {
                     if (isStreaming) {
                       setScanFeedback('Camera scant nu...');
                     }
-                  }, 1000);
-            }, 2000);
+                  }, 2000);
+            }, 5000);
           } else {
             // Getallen komen niet overeen, reset en probeer opnieuw
             setScanFeedback(`Verificatie mislukt, getallen komen niet overeen. Probeer opnieuw...`);
@@ -1659,10 +1667,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const renderCamera = () => {
     return (
       <div className="camera-container relative w-full h-full">
-        {/* Gedetecteerd nummer boven camerabeeld */}
+        {/* Gedetecteerd nummer boven camerabeeld met duidelijke validatie-indicatie */}
         {detectedNumber && (
-          <div className="mb-4 text-center p-3 bg-gray-100 rounded-lg shadow-md w-full max-w-md">
+          <div className={`mb-4 text-center p-3 rounded-lg shadow-md w-full max-w-md ${
+            isValidNumber === true ? 'bg-green-100 border-2 border-green-500' : 
+            isValidNumber === false ? 'bg-red-100 border-2 border-red-500' : 
+            'bg-gray-100'
+          }`}>
             <div className="text-4xl font-bold font-mono">{detectedNumber}</div>
+            {isValidNumber !== null && (
+              <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
+                {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
+              </div>
+            )}
           </div>
         )}
         
@@ -1751,9 +1768,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             </div>
           )}
           
-          {/* Feedback voor gebruiker */}
+          {/* Feedback voor gebruiker met opvallendere kleuren voor validatie */}
           {scanFeedback && (
-            <div className="absolute bottom-2 left-2 right-2 bg-black bg-opacity-70 text-white p-2 rounded-md text-sm text-center">
+            <div className={`absolute bottom-2 left-2 right-2 p-2 rounded-md text-sm text-center font-bold ${
+              scanFeedback.includes('GELDIG:') ? 'bg-green-600 text-white' : 
+              scanFeedback.includes('ONGELDIG:') ? 'bg-red-600 text-white' : 
+              'bg-black bg-opacity-70 text-white'
+            }`} style={{ fontSize: scanFeedback.includes('GELDIG:') || scanFeedback.includes('ONGELDIG:') ? '1.1rem' : '0.875rem' }}>
               {scanFeedback}
             </div>
           )}
@@ -2061,7 +2082,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                             <div className="flex justify-between">
                               <label className="text-xs">Gamma: {extraProcessingOptions.gammaCorrection.toFixed(1)}</label>
                               <button 
-                                onClick={() => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: 1.0}))}
+                                onClick={() => setExtraProcessingOptions(prev => ({...prev, gammaCorrection: 0}))}
                                 className="text-xs bg-gray-500 px-1 rounded"
                               >
                                 Reset
