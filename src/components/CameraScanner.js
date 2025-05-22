@@ -2896,8 +2896,19 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       <div className="manual-input-container w-full max-w-md">
         <div className="mb-4 text-center">
           <h2 className="text-xl font-bold mb-2">Voer eendnummer handmatig in</h2>
-          <div className="input-display border-2 p-3 rounded-lg text-center bg-gray-50 mb-4">
+          <div 
+            className={`input-display border-2 p-3 rounded-lg text-center bg-gray-50 mb-4 flex items-center justify-center ${
+              isValidNumber === true ? 'border-green-500' :
+              isValidNumber === false ? 'border-red-500' :
+              'border-gray-300'
+            }`}
+          >
             <span className="text-3xl font-mono font-bold">{manualInput || '____'}</span>
+            {isValidNumber !== null && (
+              <span className={`ml-4 text-4xl ${isValidNumber ? 'text-green-600' : 'text-red-600'}`}>
+                {isValidNumber ? '✓' : '✗'}
+              </span>
+            )}
           </div>
           
           {/* Feedback over geldigheid - altijd zichtbare container met vaste hoogte */}
