@@ -2008,24 +2008,28 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const renderCamera = () => {
     return (
       <div className="camera-container relative w-full h-full">
-        {/* Gedetecteerd nummer boven camerabeeld met duidelijke validatie-indicatie */}
-        {detectedNumber && (
-          <div className={`mb-4 text-center p-3 rounded-lg shadow-md w-full max-w-md min-h-[120px] flex flex-col justify-center ${
-            isValidNumber === true ? 'bg-green-100 border-2 border-green-500' : 
-            isValidNumber === false ? 'bg-red-100 border-2 border-red-500' : 
-            'bg-gray-100'
-          }`}>
-            <div className="text-4xl font-bold font-mono">{detectedNumber}</div>
-            {isValidNumber !== null && (
-              <>
-                <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
-                  {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
-                </div>
-                <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
-              </>
-            )}
-          </div>
-        )}
+        {/* Vaste container voor gedetecteerd nummer - voorkomt verspringen */}
+        <div className="mb-4 text-center w-full max-w-md min-h-[120px] flex flex-col justify-center">
+          {detectedNumber ? (
+            <div className={`p-3 rounded-lg shadow-md w-full ${
+              isValidNumber === true ? 'bg-green-100 border-2 border-green-500' : 
+              isValidNumber === false ? 'bg-red-100 border-2 border-red-500' : 
+              'bg-gray-100'
+            }`}>
+              <div className="text-4xl font-bold font-mono">{detectedNumber}</div>
+              {isValidNumber !== null && (
+                <>
+                  <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
+                    {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
+                  </div>
+                  <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
+                </>
+              )}
+            </div>
+          ) : (
+            <div className="text-gray-400 text-sm">Scannen naar eendnummer...</div>
+          )}
+        </div>
         
         {/* Altijd het camerabeeld tonen */}
         <div className={`relative mb-2 rounded-lg overflow-hidden ${getCameraContainerClass()}`}>
