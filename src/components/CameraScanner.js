@@ -35,7 +35,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
   const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
   const [skipPreprocessing, setSkipPreprocessing] = useState(true); // Standaard op true gezet (direct naar OCR)
-  const [scanSpeed, setScanSpeed] = useState(500); // Scansnelheid in ms, standaard 500ms
+  const [scanSpeed, setScanSpeed] = useState(200); // Scansnelheid in ms, standaard 200ms
   const [minOcrConfidence, setMinOcrConfidence] = useState(80); // Minimale OCR confidence (0-100)
   const [doubleOcrConfirmEnabled, setDoubleOcrConfirmEnabled] = useState(true); // Dubbele OCR bevestiging aan/uit
   const [doubleOcrConfirmCount, setDoubleOcrConfirmCount] = useState(2); // Aantal keer zelfde getal nodig
@@ -2865,7 +2865,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 <div className="flex justify-between">
                   <label className="text-sm font-bold text-yellow-300">Scansnelheid: {scanSpeed}ms</label>
                   <button 
-                    onClick={() => setScanSpeed(500)}
+                    onClick={() => setScanSpeed(200)}
                     className="text-xs bg-gray-500 px-1 rounded"
                   >
                     Reset
@@ -2873,18 +2873,18 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 </div>
                 <input
                   type="range"
-                  min="200"
-                  max="5000"
-                  step="100"
+                  min="100"
+                  max="1000"
+                  step="50"
                   value={scanSpeed}
                   onChange={e => setScanSpeed(parseInt(e.target.value))}
                   className="w-full h-1 mt-1"
                 />
                 <div className="text-xs text-gray-300 mt-1">
-                  {scanSpeed < 500 ? "Zeer snel (meer CPU belasting)" : 
-                   scanSpeed < 1000 ? "Snel" :
-                   scanSpeed < 2000 ? "Normaal" :
-                   scanSpeed < 3000 ? "Langzaam" : "Zeer langzaam (minder CPU belasting)"}
+                  {scanSpeed < 200 ? "Zeer snel (meer CPU belasting)" : 
+                   scanSpeed < 500 ? "Snel" :
+                   scanSpeed < 800 ? "Normaal" :
+                   scanSpeed < 1000 ? "Langzaam" : "Zeer langzaam (minder CPU belasting)"}
                 </div>
               </div>
 
