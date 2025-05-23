@@ -20,7 +20,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [lastDetectedNumber, setLastDetectedNumber] = useState(null);
   const [verificationInProgress, setVerificationInProgress] = useState(false);
   const [zoomLevel, setZoomLevel] = useState(2.2); // 220% standaard
-  const [cropZoomLevel, setCropZoomLevel] = useState(0.4); // 40% standaard
+  const [cropZoomLevel, setCropZoomLevel] = useState(0.7); // 70% standaard
   const [showDebug, setShowDebug] = useState(false);
   const [debugImage, setDebugImage] = useState(null);
   const [debugProcessedImage, setDebugProcessedImage] = useState(null);
@@ -34,7 +34,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [hasTorch, setHasTorch] = useState(false); // Of het apparaat een flitser heeft
   const [openCvLoaded, setOpenCvLoaded] = useState(false); // Toegevoegd om OpenCV status bij te houden
   const [processingTechnique, setProcessingTechnique] = useState('adaptive'); // 'adaptive', 'binary', 'canny'
-  const [skipPreprocessing, setSkipPreprocessing] = useState(false); // Optie om voorbewerking over te slaan
+  const [skipPreprocessing, setSkipPreprocessing] = useState(true); // Standaard op true gezet (direct naar OCR)
+  const [scanSpeed, setScanSpeed] = useState(500); // Scansnelheid in ms, standaard 500ms
+  const [minOcrConfidence, setMinOcrConfidence] = useState(80); // Minimale OCR confidence (0-100)
+  const [doubleOcrConfirmEnabled, setDoubleOcrConfirmEnabled] = useState(true); // Dubbele OCR bevestiging aan/uit
+  const [doubleOcrConfirmCount, setDoubleOcrConfirmCount] = useState(2); // Aantal keer zelfde getal nodig
   const [extraProcessingOptions, setExtraProcessingOptions] = useState({
     contrastLevel: 1.5,       // Contrastniveau (1.0 = normaal, 2.0 = hoog contrast)
     brightnessAdjust: 10,     // Helderheidsaanpassing (-50 tot 50)
@@ -60,11 +64,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [showAdvancedProcessing, setShowAdvancedProcessing] = useState(false);
   const [ocrSettings, setOcrSettings] = useState({
     // VERBETERDE SEGMENTATIE MODE VOOR CIJFERS
-    pagesegMode: 8, // 8 = enkel woord (beter voor geïsoleerde cijfers dan 6)
+    pagesegMode: 3, // 3 = automatische paginasegmentatie zonder OSD (aangepast van 8 naar 3)
     // Alternatieve opties: 10 = enkel karakter, 13 = ruwe lijn
     
     // OCR engine mode 
-    engineMode: 3, // 3 = alleen LSTM (sneller en vaak beter voor cijfers)
+    engineMode: 3, // 3 = alleen LSTM (sneller en vaak beter voor cijfers) - al correct
     
     // SPECIFIEKE CIJFER PARAMETERS
     heavyNr: true,
@@ -123,6 +127,10 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     // CRUCIALE WIJZIGING: Veel hogere pixeldichtheid voor betere OCR
     pixelDensity: 4.0, // Verhoogd van 2.0 naar 4.0 voor veel scherper beeld naar tesseract
   };
+
+  // Voeg bovenaan toe:
+  const ocrConfirmBuffer = useRef([]);
+  const ocrLastNumber = useRef(null);
 
   // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
   const validateNumber = (detected, validNumbers) => {
@@ -661,7 +669,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       if (!isProcessing && !isPaused && isStreaming) {
         captureImage();
       }
-    }, 1000); // Scan elke seconde
+    }, scanSpeed); // Scan elke seconde
   };
   
   // Stop automatisch scannen
@@ -1867,6 +1875,35 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             // Als de confidence te laag is, probeer eens een langere tekstreeks te nemen
             const number = bestNumber;
+            const confidence = data.confidence;
+
+            // NIEUW: Confidence check
+            if (confidence < minOcrConfidence) {
+              setScanFeedback(`Confidence te laag (${Math.round(confidence)}%), scan wordt genegeerd.`);
+              setIsProcessing(false);
+              processingTimeRef.current = null;
+              return;
+            }
+
+            // NIEUW: Dubbele OCR bevestiging
+            if (doubleOcrConfirmEnabled) {
+              if (ocrLastNumber.current === number) {
+                ocrConfirmBuffer.current.push(number);
+              } else {
+                ocrConfirmBuffer.current = [number];
+                ocrLastNumber.current = number;
+              }
+              if (ocrConfirmBuffer.current.length < doubleOcrConfirmCount) {
+                setScanFeedback(`Wacht op ${doubleOcrConfirmCount}x dezelfde OCR-uitkomst (${ocrConfirmBuffer.current.length}/${doubleOcrConfirmCount})`);
+                setIsProcessing(false);
+                processingTimeRef.current = null;
+                return;
+              } else {
+                // Reset buffer voor volgende detectie
+                ocrConfirmBuffer.current = [];
+                ocrLastNumber.current = null;
+              }
+            }
             
             // NIEUWE LOGICA: Directe validatie bij hoge confidence
             const highConfidence = data.confidence > 80;
@@ -1901,24 +1938,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               // Resetlogica en pauze
               setVerificationInProgress(false);
               setLastDetectedNumber(null);
-              setIsPaused(true);
-              
-              console.log("Scannen gepauzeerd voor 5 seconden na detectie van " + number);
-              
-              // Verlengde pauze (5 seconden) na detectie zodat gebruiker het resultaat kan zien
-              setTimeout(() => {
-                setIsPaused(false);
-                setIsProcessing(false);
-                processingTimeRef.current = null;
-                setScanFeedback('Scannen hervat...');
-                
-                // Na 2 seconden de scan feedback updaten
-    setTimeout(() => {
-      if (isStreaming) {
-                    setScanFeedback('Camera scant nu...');
-                  }
-                }, 2000);
-              }, 5000);
+              setIsProcessing(false);
+              processingTimeRef.current = null;
             }
             // Bij lagere confidence, gebruik verificatiestap
             else if (!verificationInProgress) {
@@ -1996,9 +2017,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           }`}>
             <div className="text-4xl font-bold font-mono">{detectedNumber}</div>
             {isValidNumber !== null && (
-              <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
-                {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
-              </div>
+              <>
+                <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
+                  {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
+                </div>
+                <div className="mt-1 text-red-600 font-bold animate-pulse">Controleer het nummer!</div>
+              </>
             )}
           </div>
         )}
@@ -2099,8 +2123,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     transition: isPaused ? 'none' : 'top 0.3s ease-out'
                   }}
                 ></div>
+                </div>
               </div>
-            </div>
           )}
           
           {/* Feedback voor gebruiker met opvallendere kleuren voor validatie */}
@@ -2111,7 +2135,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               'bg-black bg-opacity-70 text-white'
             }`} style={{ fontSize: scanFeedback.includes('GELDIG:') || scanFeedback.includes('ONGELDIG:') ? '1.1rem' : '0.875rem' }}>
               {skipPreprocessing && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ? 
-                `⚠️ DIRECT NAAR ${ocrEngine.toUpperCase()}: ${scanFeedback}` : 
+                `DIRECT ${ocrEngine.toUpperCase()}: ${scanFeedback}` : 
                 ocrEngine === 'gocr' && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ?
                 `[GOCR] ${scanFeedback}` :
                 ocrEngine === 'chatgpt' && !scanFeedback.includes('GELDIG:') && !scanFeedback.includes('ONGELDIG:') ?
@@ -2122,11 +2146,11 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           
           {/* Indicator voor direct-naar-OCR modus */}
           {skipPreprocessing && isStreaming && (
-            <div className="absolute top-2 right-2 bg-yellow-500 text-black px-2 py-1 rounded-md text-xs font-bold animate-pulse">
-              DIRECT NAAR OCR
+            <div className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded-md text-xs font-bold">
+              DIRECT NAAR OCR (standaard)
             </div>
           )}
-        </div>
+              </div>
         
         {/* Debug weergave (alleen getoond wanneer ingeschakeld) */}
         {showDebug && (
@@ -2239,8 +2263,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 </button>
               </div>
             </div>
-          </div>
-        )}
+            </div>
+          )}
         
         {/* UI voor geavanceerde instellingen */}
         {advancedOcrVisible && (
@@ -2279,8 +2303,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     'GOCR: Alternatieve OCR-engine, soms beter voor eenvoudige cijfers.' :
                     'ChatGPT: Gebruikt AI om cijfers te herkennen via de OpenAI API.'}
                 </div>
-              </div>
-              
+        </div>
+        
               {/* OCR kwaliteit (alleen voor Tesseract) */}
               {ocrEngine === 'tesseract' && (
                 <div className="setting-group">
@@ -2304,8 +2328,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     >
                       Nauwkeurig
                     </button>
-                  </div>
-                </div>
+            </div>
+            </div>
               )}
               
               {/* NIEUWE: Page Segmentation Mode selector (alleen voor Tesseract) */}
@@ -2336,11 +2360,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     <div className="text-xs text-gray-300 mt-1">
                       Huidige instelling: PSM {ocrSettings.pagesegMode}
                       {ocrSettings.pagesegMode === 8 ? " (Geoptimaliseerd voor cijfers)" : ""}
-                    </div>
-                  </div>
-                </div>
-              )}
-              
+                      {ocrSettings.pagesegMode === 3 ? " (Standaard: automatische segmentatie)" : ""}
+              </div>
+            </div>
+          </div>
+        )}
+        
               {/* NIEUWE: OCR Engine Mode selector (alleen voor Tesseract) */}
               {ocrEngine === 'tesseract' && (
                 <div className="setting-group">
@@ -2393,7 +2418,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                       className="mr-1"
                     />
                     <label htmlFor="skipPreprocessingToggle" className="text-xs">
-                      {skipPreprocessing ? "Ja (geen voorbewerking)" : "Nee (met voorbewerking)"}
+                      {skipPreprocessing ? "Ja (standaard: geen voorbewerking)" : "Nee (met voorbewerking)"}
                   </label>
                   </div>
                 </div>
@@ -2629,8 +2654,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                         </div>
                           </div>
                 )}
-                      </div>
-                      
+                        </div>
+                        
               {/* Camera instellingen */}
               <div className="setting-group mt-2">
                 <button
@@ -2739,9 +2764,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                         >
                           Vast
                         </button>
-                          </div>
                         </div>
-                        
+                      </div>
+                      
                     {/* Witbalans */}
                     <div className="mt-2">
                       <label className="text-xs block mb-1">Witbalans:</label>
@@ -2830,7 +2855,91 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   <label htmlFor="debugToggle" className="text-xs">Tonen</label>
                           </div>
                         </div>
-                      </div>
+                        
+              {/* NIEUWE: Scansnelheid instelling */}
+              <div className="setting-group">
+                <div className="flex justify-between">
+                  <label className="text-sm font-bold text-yellow-300">Scansnelheid: {scanSpeed}ms</label>
+                  <button 
+                    onClick={() => setScanSpeed(500)}
+                    className="text-xs bg-gray-500 px-1 rounded"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="200"
+                  max="5000"
+                  step="100"
+                  value={scanSpeed}
+                  onChange={e => setScanSpeed(parseInt(e.target.value))}
+                  className="w-full h-1 mt-1"
+                />
+                <div className="text-xs text-gray-300 mt-1">
+                  {scanSpeed < 500 ? "Zeer snel (meer CPU belasting)" : 
+                   scanSpeed < 1000 ? "Snel" :
+                   scanSpeed < 2000 ? "Normaal" :
+                   scanSpeed < 3000 ? "Langzaam" : "Zeer langzaam (minder CPU belasting)"}
+                </div>
+              </div>
+
+              {/* OCR minimum confidence instelling */}
+              <div className="setting-group mt-2">
+                <div className="flex justify-between">
+                  <label className="text-sm font-bold text-yellow-300">Minimale OCR confidence: {minOcrConfidence}%</label>
+                  <button 
+                    onClick={() => setMinOcrConfidence(80)}
+                    className="text-xs bg-gray-500 px-1 rounded"
+                  >
+                    Reset
+                  </button>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={minOcrConfidence}
+                  onChange={e => setMinOcrConfidence(parseInt(e.target.value))}
+                  className="w-full h-1 mt-1"
+                />
+                <div className="text-xs text-gray-300 mt-1">
+                  Alleen getallen met een OCR confidence van minimaal {minOcrConfidence}% worden gebruikt.
+                </div>
+              </div>
+
+              {/* Dubbele OCR bevestiging instelling */}
+              <div className="setting-group mt-2">
+                <div className="flex items-center mb-1">
+                  <input
+                    type="checkbox"
+                    id="doubleOcrConfirmEnabled"
+                    checked={doubleOcrConfirmEnabled}
+                    onChange={e => setDoubleOcrConfirmEnabled(e.target.checked)}
+                    className="mr-2"
+                  />
+                  <label htmlFor="doubleOcrConfirmEnabled" className="text-sm font-bold text-yellow-300">
+                    Vereis {doubleOcrConfirmCount}x dezelfde OCR-uitkomst achter elkaar
+                  </label>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="5"
+                  step="1"
+                  value={doubleOcrConfirmCount}
+                  onChange={e => setDoubleOcrConfirmCount(parseInt(e.target.value))}
+                  className="w-full h-1 mt-1"
+                  disabled={!doubleOcrConfirmEnabled}
+                />
+                <div className="text-xs text-gray-300 mt-1">
+                  {doubleOcrConfirmEnabled
+                    ? `Een getal moet ${doubleOcrConfirmCount}x achter elkaar exact hetzelfde zijn voordat het gevalideerd wordt.`
+                    : 'Direct valideren bij voldoende confidence.'}
+                </div>
+              </div>
+            </div>
           </div>
         )}
         
@@ -2992,12 +3101,12 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     
     try {
       const params = {
-        tessedit_char_whitelist: '0123456789',
-        tessedit_pageseg_mode: settings.pagesegMode.toString(),
-        tessedit_ocr_engine_mode: settings.engineMode.toString(),
-        textord_heavy_nr: settings.heavyNr ? '1' : '0',
-        classify_bln_numeric_mode: settings.numericMode ? '1' : '0',
-        preserve_interword_spaces: settings.preserveSpaces ? '1' : '0',
+      tessedit_char_whitelist: '0123456789',
+      tessedit_pageseg_mode: settings.pagesegMode.toString(),
+      tessedit_ocr_engine_mode: settings.engineMode.toString(),
+      textord_heavy_nr: settings.heavyNr ? '1' : '0',
+      classify_bln_numeric_mode: settings.numericMode ? '1' : '0',
+      preserve_interword_spaces: settings.preserveSpaces ? '1' : '0',
       };
       
       await workerRef.current.setParameters(params);
@@ -3059,15 +3168,17 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               </span>
             )}
           </div>
-          
           {/* Feedback over geldigheid - altijd zichtbare container met vaste hoogte */}
-          <div className="h-16 mt-2 flex items-center justify-center">
+          <div className="h-16 mt-2 flex flex-col items-center justify-center">
             {isValidNumber !== null ? (
-              <div className={`w-full p-2 rounded ${isValidNumber ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                {isValidNumber 
-                  ? "✓ Dit nummer komt voor in de lijst!" 
-                  : "✗ Dit nummer komt niet voor in de lijst."}
-              </div>
+              <>
+                <div className={`w-full p-2 rounded ${isValidNumber ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                  {isValidNumber 
+                    ? "✓ Dit nummer komt voor in de lijst!" 
+                    : "✗ Dit nummer komt niet voor in de lijst."}
+                </div>
+                <div className="mt-1 text-red-600 font-bold animate-pulse">Controleer het nummer!</div>
+              </>
             ) : null}
           </div>
         </div>
@@ -3262,6 +3373,17 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       onNumberDetected(newInput, isValid);
     }
   };
+
+  // Geldigheid-melding slechts 1 seconde tonen
+  useEffect(() => {
+    if (isValidNumber !== null && detectedNumber) {
+      const timer = setTimeout(() => {
+        setIsValidNumber(null);
+        // Optioneel: setDetectedNumber(''); // Alleen wissen als je het nummer wilt laten verdwijnen
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [isValidNumber, detectedNumber]);
 
   return (
     <div className="flex flex-col items-center">
