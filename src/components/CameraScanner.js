@@ -59,18 +59,26 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const [showAdvancedCamera, setShowAdvancedCamera] = useState(false);
   const [showAdvancedProcessing, setShowAdvancedProcessing] = useState(false);
   const [ocrSettings, setOcrSettings] = useState({
-    // Segmentatie mode
-    pagesegMode: 6, // 6 = blok tekst, 7 = één regel
+    // VERBETERDE SEGMENTATIE MODE VOOR CIJFERS
+    pagesegMode: 8, // 8 = enkel woord (beter voor geïsoleerde cijfers dan 6)
+    // Alternatieve opties: 10 = enkel karakter, 13 = ruwe lijn
+    
     // OCR engine mode 
-    engineMode: 2, // 2 = LSTM, 3 = alleen LSTM (sneller)
-    // Tekst parameters
+    engineMode: 3, // 3 = alleen LSTM (sneller en vaak beter voor cijfers)
+    
+    // SPECIFIEKE CIJFER PARAMETERS
     heavyNr: true,
     minLinesize: 2.5,
     numericMode: true,
     preserveSpaces: false,
-    // LSTM parameters
+    
+    // CHARACTER WHITELIST - ALLEEN CIJFERS
+    charWhitelist: '0123456789', // Alleen cijfers toestaan
+    
+    // LSTM parameters voor betere herkenning
     lstmChoiceMode: 2,
     lstmIterations: 15,
+    
     // Kwaliteitsparameters
     oldXheight: false,
     forcePropWords: false,
@@ -80,18 +88,40 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     maxSlope: 0.414,
     minXheight: 8,
     maxOutlineChildren: 40,
-    // Verbeterde parameter voor cijferherkenning
+    
+    // NIEUWE: Verbeterde parameters voor cijferherkenning
     dignormNormalizeMode: 8, // Speciale normalisatie voor cijfers
     dignormAdjNonSpace: true, // Betere afstandsbepaling tussen cijfers
     dignormQuadMoments: true, // Verbeterde patroonherkenning voor cijfers
+    
+    // NIEUWE: Specifieke instellingen voor kleine tekst
+    textordTabfindVertTextRatio: 0.7, // Verhoog verticale tekstdetectie
+    textordMinXheight: 10, // Minimum tekst hoogte in pixels
+    textordSpacebandKernfactor: 2.5, // Betere spatie detectie
+    textordWordspaceFixFactor: 0.9, // Verbeterde woordafstand
+    
+    // NIEUWE: Verbeterde baseline detectie
+    textordBaselineDebug: 0,
+    textordStraightBaselineDrift: 0.01,
+    textordQuadraticBaselineDrift: 0.02,
+    
+    // NIEUWE: Cijfer-specifieke classificatie
+    classifyIntegerMatcherMultiplier: 10, // Verhoog gewicht voor cijfermatches
+    classifyAdaptFeatureThreshold: 230, // Lagere drempel voor feature detectie
+    classifyBernormalBump: 0.1, // Verbeterde normalisatie
+    
+    // NIEUWE: Edge/contrast verbetering
+    edgesTuseNewOutlineComplexity: true,
+    edgesChildarea: 0.5,
+    edgesMinNonhole: 12
   });
   
   // Instellingen voor het scan-kader als constante (niet als state)
   const scanFrame = {
-    width: 180,  // Breedte van het kader in pixels (iets breder voor meer context)
-    height: 70, // Hoogte van het kader in pixels (iets hoger voor meer ruimte rond cijfers)
-    // Pixeldichtheid voor betere kwaliteit (hoger = meer detail in dezelfde afmeting)
-    pixelDensity: 2.0, // Verdubbel de pixeldichtheid voor betere kwaliteit
+    width: 200,  // Verhoogd van 180 naar 200 pixels voor meer context
+    height: 80,  // Verhoogd van 70 naar 80 pixels voor betere cijferherkenning
+    // CRUCIALE WIJZIGING: Veel hogere pixeldichtheid voor betere OCR
+    pixelDensity: 4.0, // Verhoogd van 2.0 naar 4.0 voor veel scherper beeld naar tesseract
   };
 
   // Helper functie om een gedetecteerd nummer te valideren tegen de lijst
@@ -335,7 +365,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       feedbackText += ` - Breder gebied (meer context, minder detail)`;
     } else if (newCropZoom > 1) {
       feedbackText += ` - Kleiner gebied (meer detail, minder context)`;
-    } else {
+      } else {
       feedbackText += ` - Standaard gebied`;
     }
     
@@ -757,73 +787,89 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
   const updateOcrParameters = async () => {
     if (!workerRef.current) return;
     
-    // Deze functie wordt alleen gebruikt voor de initiële setup
-    // Voor latere updates gebruiken we updateOcrSetting en de kwaliteitsknoppen
-    
-    // Nieuwe instellingen op basis van de gekozen kwaliteit
-    let newSettings = { ...ocrSettings };
-    
-    // We voegen alleen de standaardinstellingen toe voor de gekozen kwaliteit
-    // zonder bestaande aangepaste instellingen te overschrijven, behalve bij initialisatie
-    switch (ocrQuality) {
-      case 'fast':
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 7,           // Eén regel tekst
-          engineMode: 3,            // Alleen LSTM (sneller)
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 1,         // Snelle modus
-          lstmIterations: 10,
-          goodQualityRating: 0.95,
-        };
-        break;
+    try {
+      console.log("OCR parameters bijwerken met instellingen:", ocrSettings);
+      
+      // CRUCIALE CHARACTER WHITELIST - ALLEEN CIJFERS
+      if (ocrSettings.charWhitelist) {
+        await workerRef.current.setParameters({
+          'tessedit_char_whitelist': ocrSettings.charWhitelist
+        });
+        console.log(`Character whitelist ingesteld op: ${ocrSettings.charWhitelist}`);
+      }
+      
+      // PAGE SEGMENTATION MODE - BELANGRIJK VOOR CIJFERS
+      if (ocrSettings.pagesegMode !== undefined) {
+        await workerRef.current.setParameters({
+          'tessedit_pageseg_mode': ocrSettings.pagesegMode.toString()
+        });
+        console.log(`Page segmentation mode ingesteld op: ${ocrSettings.pagesegMode}`);
+      }
+      
+      // OCR ENGINE MODE
+      if (ocrSettings.engineMode !== undefined) {
+        await workerRef.current.setParameters({
+          'tessedit_ocr_engine_mode': ocrSettings.engineMode.toString()
+        });
+        console.log(`OCR engine mode ingesteld op: ${ocrSettings.engineMode}`);
+      }
+      
+      // NUMERIEKE PARAMETERS
+      const numericParams = {
+        'numeric_mode': ocrSettings.numericMode ? '1' : '0',
+        'tessedit_zero_rejection': '0', // Sta nul-karakters toe
+        'tessedit_reject_bad_qual_wds': '0', // Accepteer woorden van lagere kwaliteit
+        'textord_heavy_nr': ocrSettings.heavyNr ? '1' : '0',
+        'preserve_interword_spaces': ocrSettings.preserveSpaces ? '1' : '0',
+      };
+      
+      await workerRef.current.setParameters(numericParams);
+      console.log("Numerieke parameters ingesteld:", numericParams);
+      
+      // NIEUWE VERBETERDE PARAMETERS VOOR CIJFERHERKENNING
+      const advancedParams = {
+        // Baseline en tekstdetectie verbetering
+        'textord_tabfind_vertical_text_ratio': ocrSettings.textordTabfindVertTextRatio?.toString() || '0.7',
+        'textord_min_xheight': ocrSettings.textordMinXheight?.toString() || '10',
+        'textord_spaceband_kernfactor': ocrSettings.textordSpacebandKernfactor?.toString() || '2.5',
+        'textord_words_space_fix_factor': ocrSettings.textordWordspaceFixFactor?.toString() || '0.9',
         
-      case 'accurate':
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 6,           // Blok tekst (nauwkeuriger voor getallen)
-          engineMode: 2,            // LSTM (nauwkeuriger)
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 2,         // Betere kwaliteit
-          lstmIterations: 15,
-          oldXheight: false,
-          forcePropWords: false,
-          doInvert: false,
-          goodQualityRating: 0.98,
-          minSlope: 0.414,
-          maxSlope: 0.414, 
-          minXheight: 8,
-          maxOutlineChildren: 40,
-        };
-        break;
+        // Verbeterde classificatie voor cijfers
+        'classify_integer_matcher_multiplier': ocrSettings.classifyIntegerMatcherMultiplier?.toString() || '10',
+        'classify_adapt_feature_threshold': ocrSettings.classifyAdaptFeatureThreshold?.toString() || '230',
+        'classify_bln_normal_bump': ocrSettings.classifyBernormalBump?.toString() || '0.1',
         
-      default: // 'balanced'
-        newSettings = {
-          ...newSettings,
-          pagesegMode: 7,
-          engineMode: 2,
-          heavyNr: true,
-          minLinesize: 2.5,
-          numericMode: true,
-          preserveSpaces: false,
-          lstmChoiceMode: 1,
-          lstmIterations: 12,
-          doInvert: false,
-          goodQualityRating: 0.96,
-        };
+        // Edge en contrast verbetering
+        'edges_use_new_outline_complexity': ocrSettings.edgesTuseNewOutlineComplexity ? '1' : '0',
+        'edges_childarea': ocrSettings.edgesChildarea?.toString() || '0.5',
+        'edges_min_nonhole': ocrSettings.edgesMinNonhole?.toString() || '12',
+        
+        // Aanvullende parameters voor betere cijferherkenning
+        'tessedit_write_images': '0', // Geen debug images
+        'user_defined_dpi': '300', // Vaste DPI voor consistentie
+        'textord_equation_detect': '0', // Geen vergelijking detectie
+        'textord_tabfind_show_vlines': '0', // Geen verticale lijn detectie
+      };
+      
+      await workerRef.current.setParameters(advancedParams);
+      console.log("Geavanceerde parameters voor cijferherkenning ingesteld");
+      
+      // LSTM PARAMETERS (indien ondersteund)
+      if (ocrSettings.lstmChoiceMode !== undefined) {
+        try {
+          await workerRef.current.setParameters({
+            'lstm_choice_mode': ocrSettings.lstmChoiceMode.toString(),
+            'lstm_choice_iterations': ocrSettings.lstmIterations?.toString() || '15'
+          });
+          console.log("LSTM parameters ingesteld");
+        } catch (lstmError) {
+          console.warn("LSTM parameters niet ondersteund:", lstmError);
+        }
+      }
+      
+    } catch (error) {
+      console.error('Fout bij bijwerken OCR parameters:', error);
     }
-    
-    // Update state met de nieuwe instellingen
-    setOcrSettings(newSettings);
-    
-    // Pas de nieuwe instellingen toe
-    await applyCustomOcrParameters(newSettings);
   };
 
   // Eenvoudige fallback beeldverwerking zonder OpenCV
@@ -987,7 +1033,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     bgr.get(i).delete();
                   }
                   bgr.delete();
-                } else {
+    } else {
                   // Alternatieve implementatie als LUT niet beschikbaar is
                   console.log("LUT functie niet beschikbaar, gebruik alternatieve methode voor gamma correctie in kleurenmodus");
                   
@@ -1137,6 +1183,24 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
             
             // 1. VOORBEHANDELING (vóór threshold/canny)
             
+            // NIEUWE: Speciale preprocessing voor cijfers - histogram equalization
+            try {
+              // Verbeter contrast met CLAHE (Contrast Limited Adaptive Histogram Equalization)
+              const clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
+              clahe.apply(dst, dst);
+              clahe.delete();
+              console.log("CLAHE toegepast voor betere contrast");
+            } catch (claheError) {
+              console.warn("CLAHE niet beschikbaar, gebruik standaard histogram equalization");
+              // Fallback naar gewone histogram equalization
+              try {
+                cv.equalizeHist(dst, dst);
+                console.log("Histogram equalization toegepast");
+              } catch (histError) {
+                console.warn("Histogram equalization ook niet beschikbaar");
+              }
+            }
+            
             // Ruisonderdrukking toepassen als waarde > 0
             if (adaptiveOptions.denoisingStrength > 0) {
               // Voor sterke ruis: fastNlMeansDenoising is effectiever dan gaussianBlur
@@ -1161,15 +1225,39 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 cv.GaussianBlur(dst, dst, ksize, 0);
               }
             } else {
-              // Standaard Gaussian blur om ruis te verminderen
-              const ksize = new cv.Size(5, 5);
-              cv.GaussianBlur(dst, dst, ksize, 0);
+              // NIEUWE: Zeer lichte Gaussian blur alleen voor anti-aliasing
+              const ksize = new cv.Size(3, 3);
+              cv.GaussianBlur(dst, dst, ksize, 0.5);
             }
             
-            // Helderheid en contrast aanpassen
+            // NIEUWE: Verscherping VOOR contrast aanpassing (betere resultaten)
+            if (adaptiveOptions.applySharpening) {
+              try {
+                // Unsharp mask techniek voor cijferherkenning
+                const blurred = new cv.Mat();
+                const ksize = new cv.Size(3, 3); // Kleinere kernel voor scherpere resultaten
+                
+                // Blur de afbeelding
+                cv.GaussianBlur(dst, blurred, ksize, 1.0);
+                
+                // Sterker verscherpingseffect voor cijfers: 2.0 en -1.0
+                cv.addWeighted(dst, 2.0, blurred, -1.0, 0, dst);
+                
+                blurred.delete();
+                console.log("Verscherping toegepast voor cijferherkenning");
+              } catch (error) {
+                console.warn('Verscherping mislukt:', error);
+              }
+            }
+            
+            // Helderheid en contrast aanpassen - verhoogde waarden voor cijfers
             if (adaptiveOptions.contrastLevel !== 1.0 || adaptiveOptions.brightnessAdjust !== 0) {
-              // alpha = contrast, beta = brightness
-              dst.convertTo(dst, -1, adaptiveOptions.contrastLevel, adaptiveOptions.brightnessAdjust);
+              // Extra contrast boost voor cijferherkenning
+              const boostedContrast = adaptiveOptions.contrastLevel * 1.2; // 20% extra contrast
+              dst.convertTo(dst, -1, boostedContrast, adaptiveOptions.brightnessAdjust);
+            } else {
+              // Standaard contrast boost voor cijfers
+              dst.convertTo(dst, -1, 1.3, 5); // Lichte verhoging
             }
             
             // Gammacorrectie toepassen als waarde niet 1.0 is
@@ -1297,34 +1385,47 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               }
             }
             
-            // 2. HOOFDVERWERKING (threshold/canny)
+            // 2. HOOFDVERWERKING (threshold/canny) - VERBETERD VOOR CIJFERS
             
-            // Adaptieve threshold voor betere tekst-extractie
-            // Gebruik THRESH_BINARY in plaats van THRESH_BINARY_INV om kleuren om te draaien
-            // (zwarte tekst op witte achtergrond in plaats van witte tekst op zwarte achtergrond)
-            cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 11, 2);
+            // NIEUWE: Gebruik Otsu's method voor automatische threshold bepaling
+            try {
+              // Probeer eerst Otsu's binarization (automatische threshold)
+              cv.threshold(dst, dst, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+              console.log("Otsu's threshold toegepast voor optimale binarisatie");
+            } catch (otsuError) {
+              console.warn("Otsu's method niet beschikbaar, gebruik adaptieve threshold");
+              // Fallback naar adaptieve threshold met aangepaste parameters voor cijfers
+              cv.adaptiveThreshold(dst, dst, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 15, 4);
+            }
             
-            // VERBETERDE VOORBEWERKING VOOR CIJFERHERKENNING
+            // VERBETERDE MORFOLOGISCHE OPERATIES VOOR CIJFERHERKENNING
             
             // 1. Maak een kopie van het threshold resultaat
             const thresholded = new cv.Mat();
             dst.copyTo(thresholded);
             
-            // 2. Verdik de cijfers om kleine onderbrekingen te dichten (dilate)
-            const dilateM = cv.Mat.ones(adaptiveOptions.dilationSize, adaptiveOptions.dilationSize, cv.CV_8U);
+            // 2. NIEUWE: Closing operatie om kleine gaten in cijfers te vullen
+            const closeKernel = cv.Mat.ones(2, 2, cv.CV_8U);
+            cv.morphologyEx(dst, dst, cv.MORPH_CLOSE, closeKernel, new cv.Point(-1, -1), 1);
+            closeKernel.delete();
+            
+            // 3. Verdik de cijfers om kleine onderbrekingen te dichten (dilate) - aangepast
+            const dilateSize = Math.max(1, adaptiveOptions.dilationSize - 1); // Iets minder dilatatie voor scherpere cijfers
+            const dilateM = cv.Mat.ones(dilateSize, dilateSize, cv.CV_8U);
             const dilateAnchor = new cv.Point(-1, -1);
             cv.dilate(dst, dst, dilateM, dilateAnchor, 1);
             
-            // 3. Verwijder ruis via morphologische operaties (opening)
-            const openM = cv.Mat.ones(2, 2, cv.CV_8U);
+            // 4. NIEUWE: Opening om ruis weg te nemen maar cijfers intact te houden
+            const openSize = Math.max(1, Math.floor(dilateSize / 2));
+            const openM = cv.Mat.ones(openSize, openSize, cv.CV_8U);
             const openAnchor = new cv.Point(-1, -1);
             cv.morphologyEx(dst, dst, cv.MORPH_OPEN, openM, openAnchor, 1);
             
-            // 4. Verbeter contrast voor duidelijkere cijfers
-            const contrastFactor = adaptiveOptions.contrastLevel;
-            dst.convertTo(dst, -1, contrastFactor, adaptiveOptions.brightnessAdjust);
+            // 5. FINALE contrast verbetering specifiek voor tesseract
+            const finalContrastFactor = 1.1; // Lichte verhoging na morfologische operaties
+            dst.convertTo(dst, -1, finalContrastFactor, 0);
             
-            // 5. Geheugen vrijgeven
+            // 6. Geheugen vrijgeven
             thresholded.delete();
             dilateM.delete();
             openM.delete();
@@ -1656,7 +1757,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
         if (!skipPreprocessing) {
           preprocessImage(canvas);
-        } else {
+    } else {
           console.log("Voorbewerking overgeslagen, direct naar OCR");
           // Als we debug aan hebben, toon dan de onbewerkte afbeelding als processingresultaat
           if (showDebug) {
@@ -1812,8 +1913,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 setScanFeedback('Scannen hervat...');
                 
                 // Na 2 seconden de scan feedback updaten
-                setTimeout(() => {
-                  if (isStreaming) {
+    setTimeout(() => {
+      if (isStreaming) {
                     setScanFeedback('Camera scant nu...');
                   }
                 }, 2000);
@@ -2207,6 +2308,63 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 </div>
               )}
               
+              {/* NIEUWE: Page Segmentation Mode selector (alleen voor Tesseract) */}
+              {ocrEngine === 'tesseract' && (
+                <div className="setting-group">
+                  <label className="text-sm font-bold text-yellow-300">Page Segmentation Mode (PSM):</label>
+                  <div className="mt-1">
+                    <select 
+                      value={ocrSettings.pagesegMode}
+                      onChange={(e) => updateOcrSetting('pagesegMode', parseInt(e.target.value))}
+                      className="w-full p-1 text-xs bg-gray-700 text-white rounded border border-gray-600"
+                    >
+                      <option value={0}>0 - Alleen oriëntatie en scriptdetectie (OSD)</option>
+                      <option value={1}>1 - Automatische paginasegmentatie met OSD</option>
+                      <option value={2}>2 - Automatische paginasegmentatie zonder OSD of OCR</option>
+                      <option value={3}>3 - Automatische paginasegmentatie zonder OSD</option>
+                      <option value={4}>4 - Variabele grootte van één tekstkolom</option>
+                      <option value={5}>5 - Enkele verticale tekstblok</option>
+                      <option value={6}>6 - Enkele uniforme tekstblok</option>
+                      <option value={7}>7 - Enkele tekstregel</option>
+                      <option value={8}>8 - Enkel woord (AANBEVOLEN VOOR CIJFERS)</option>
+                      <option value={9}>9 - Enkel woord in cirkel</option>
+                      <option value={10}>10 - Enkel karakter</option>
+                      <option value={11}>11 - Spaarzame tekst, zoek zoveel mogelijk tekst</option>
+                      <option value={12}>12 - Spaarzame tekst met OSD</option>
+                      <option value={13}>13 - Ruwe lijn, behandel afbeelding als enkele tekstregel</option>
+                    </select>
+                    <div className="text-xs text-gray-300 mt-1">
+                      Huidige instelling: PSM {ocrSettings.pagesegMode}
+                      {ocrSettings.pagesegMode === 8 ? " (Geoptimaliseerd voor cijfers)" : ""}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* NIEUWE: OCR Engine Mode selector (alleen voor Tesseract) */}
+              {ocrEngine === 'tesseract' && (
+                <div className="setting-group">
+                  <label className="text-sm font-bold text-yellow-300">OCR Engine Mode:</label>
+                  <div className="mt-1">
+                    <select 
+                      value={ocrSettings.engineMode}
+                      onChange={(e) => updateOcrSetting('engineMode', parseInt(e.target.value))}
+                      className="w-full p-1 text-xs bg-gray-700 text-white rounded border border-gray-600"
+                    >
+                      <option value={0}>0 - Alleen legacy engine</option>
+                      <option value={1}>1 - Alleen Neural nets LSTM engine</option>
+                      <option value={2}>2 - Legacy + LSTM engines (standaard)</option>
+                      <option value={3}>3 - Alleen LSTM (SNELST VOOR CIJFERS)</option>
+                    </select>
+                    <div className="text-xs text-gray-300 mt-1">
+                      Huidige instelling: Engine Mode {ocrSettings.engineMode}
+                      {ocrSettings.engineMode === 3 ? " (Snelste voor cijfers)" : ""}
+                      {ocrSettings.engineMode === 2 ? " (Meest nauwkeurig)" : ""}
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               {/* OpenCV voorverwerking selector */}
               <div className="setting-group">
                 <div className="flex items-center justify-between">
@@ -2226,9 +2384,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 {/* Optie om voorbewerking helemaal over te slaan */}
                 <div className="flex items-center justify-between mt-1 border-t border-gray-600 pt-1">
                   <label className="text-sm text-yellow-300">Direct naar OCR:</label>
-                  <div className="flex items-center">
-                    <input
-                      type="checkbox"
+                <div className="flex items-center">
+                  <input
+                    type="checkbox"
                       id="skipPreprocessingToggle"
                       checked={skipPreprocessing}
                       onChange={() => setSkipPreprocessing(!skipPreprocessing)}
@@ -2236,7 +2394,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     />
                     <label htmlFor="skipPreprocessingToggle" className="text-xs">
                       {skipPreprocessing ? "Ja (geen voorbewerking)" : "Nee (met voorbewerking)"}
-                    </label>
+                  </label>
                   </div>
                 </div>
                 
@@ -2453,20 +2611,20 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                                 className="mr-1"
                               />
                               <label htmlFor="autoCorrectSkew">Auto-rechtzetten</label>
-                        </div>
-                        
-                            <div className="flex items-center">
-                          <input
-                                type="checkbox"
+                          </div>
+                          
+                          <div className="flex items-center">
+                            <input
+                              type="checkbox"
                                 id="edgeEnhancement"
                                 checked={extraProcessingOptions.edgeEnhancement}
                                 onChange={e => setExtraProcessingOptions(prev => ({...prev, edgeEnhancement: e.target.checked}))}
                                 className="mr-1"
                               />
                               <label htmlFor="edgeEnhancement">Randverbetering</label>
-                        </div>
-                      </div>
                           </div>
+                        </div>
+                        </div>
                       )}
                         </div>
                           </div>
@@ -2508,7 +2666,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                           <input
                             type="range"
                         min="-3"
-                        max="3"
+                            max="3"
                         step="0.5"
                         value={cameraSettings.exposureCompensation}
                         onChange={e => {
@@ -2581,7 +2739,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                         >
                           Vast
                         </button>
-                      </div>
+                          </div>
                         </div>
                         
                     {/* Witbalans */}
@@ -2662,7 +2820,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               <div className="flex items-center justify-between">
                 <label className="text-sm">Debug modus:</label>
                 <div className="flex items-center">
-                  <input 
+                          <input
                     type="checkbox"
                     id="debugToggle"
                     checked={showDebug}
@@ -2670,9 +2828,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     className="mr-1"
                   />
                   <label htmlFor="debugToggle" className="text-xs">Tonen</label>
-              </div>
-              </div>
-            </div>
+                          </div>
+                        </div>
+                      </div>
           </div>
         )}
         
@@ -2680,27 +2838,27 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
         <div className="mb-2">
           <label htmlFor="zoomSlider" className="block text-sm font-medium text-gray-700 mb-1">
             Camera zoom: {Math.round(zoomLevel * 100)}% {zoomLevel < 1 ? "(uitgezoomd)" : "(ingezoomd)"}
-          </label>
-          <input
+                          </label>
+                          <input
             id="zoomSlider"
-            type="range"
+                            type="range"
             min="0.2"
             max="3.0"
             step="0.1"
             value={zoomLevel}
             onChange={handleZoomChange}
             className="w-full"
-          />
-        </div>
-        
+                          />
+                        </div>
+                        
         {/* Uitsnede Zoom control */}
         <div className="mb-4">
           <label htmlFor="cropZoomSlider" className="block text-sm font-medium text-gray-700 mb-1">
             Uitsnede zoom: {Math.round(cropZoomLevel * 100)}% {cropZoomLevel < 1 ? "(wijder gebied)" : cropZoomLevel > 1 ? "(smaller gebied)" : ""}
-          </label>
-          <input
+                          </label>
+                          <input
             id="cropZoomSlider"
-            type="range"
+                            type="range"
             min="0.2"
             max="4.0"
             step="0.1"
@@ -2710,8 +2868,8 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           />
           <div className="text-xs text-gray-500 mt-1">
             &lt; 100% = breder gebied (uitzoomen), &gt; 100% = smaller gebied (inzoomen)
-          </div>
-        </div>
+                        </div>
+                      </div>
         
         {/* Cameraknoppen en bestaande UI */}
         <div className="flex justify-between mb-4">
@@ -2782,72 +2940,68 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     const newSettings = { ...ocrSettings, [key]: value };
     setOcrSettings(newSettings);
     
+    console.log(`OCR instelling gewijzigd: ${key} = ${value}`);
+    
+    // Geef feedback over de wijziging
+    if (key === 'pagesegMode') {
+      const psmNames = {
+        0: "OSD alleen",
+        1: "Auto segmentatie met OSD", 
+        2: "Auto segmentatie zonder OSD/OCR",
+        3: "Auto segmentatie zonder OSD",
+        4: "Variabele tekstkolom",
+        5: "Verticaal tekstblok",
+        6: "Uniform tekstblok", 
+        7: "Enkele tekstregel",
+        8: "Enkel woord (beste voor cijfers)",
+        9: "Woord in cirkel",
+        10: "Enkel karakter",
+        11: "Spaarzame tekst",
+        12: "Spaarzame tekst met OSD",
+        13: "Ruwe lijn"
+      };
+      setScanFeedback(`PSM gewijzigd naar ${value}: ${psmNames[value] || 'Onbekend'}`);
+    } else if (key === 'engineMode') {
+      const engineNames = {
+        0: "Alleen Legacy engine",
+        1: "Alleen LSTM engine", 
+        2: "Legacy + LSTM (standaard)",
+        3: "Alleen LSTM (snelst voor cijfers)"
+      };
+      setScanFeedback(`Engine Mode gewijzigd naar ${value}: ${engineNames[value] || 'Onbekend'}`);
+    } else {
+      setScanFeedback(`${key} gewijzigd naar ${value}`);
+    }
+    
     // Update de OCR parameters met de nieuwe instellingen
     applyCustomOcrParameters(newSettings);
+    
+    // Reset feedback na korte tijd
+    setTimeout(() => {
+      if (isStreaming) {
+        setScanFeedback('Camera actief, scannen gaat door...');
+      } else {
+        setScanFeedback('');
+      }
+    }, 3000);
   };
   
   // Functie om aangepaste OCR parameters toe te passen
   const applyCustomOcrParameters = async (settings) => {
     if (!workerRef.current) return;
     
-    // Basisinstellingen worden altijd toegepast
-    const baseParams = {
-      tessedit_char_whitelist: '0123456789',
-      tessjs_create_hocr: '0',
-      tessjs_create_tsv: '0',
-      tessjs_create_box: '0',
-      tessjs_create_unlv: '0',
-      tessjs_create_osd: '0',
-      segment_nonalphabetic_script: '1',
-      textord_space_size_is_variable: '0'
-    };
-    
-    // Aangepaste parameters op basis van de UI-instellingen
-    const customParams = {
-      tessedit_pageseg_mode: settings.pagesegMode.toString(),
-      tessedit_ocr_engine_mode: settings.engineMode.toString(),
-      textord_heavy_nr: settings.heavyNr ? '1' : '0',
-      textord_min_linesize: settings.minLinesize.toString(),
-      classify_bln_numeric_mode: settings.numericMode ? '1' : '0',
-      preserve_interword_spaces: settings.preserveSpaces ? '1' : '0',
-      lstm_choice_mode: settings.lstmChoiceMode.toString(),
-      lstm_choice_iterations: settings.lstmIterations.toString(),
-      textord_really_old_xheight: settings.oldXheight ? '1' : '0',
-      textord_force_make_prop_words: settings.forcePropWords ? '1' : '0',
-      tessedit_do_invert: settings.doInvert ? '1' : '0',
-      tessedit_good_quality_rating: settings.goodQualityRating.toString(),
-      classify_min_slope: settings.minSlope.toString(),
-      classify_max_slope: settings.maxSlope.toString(),
-      textord_min_xheight: settings.minXheight.toString(),
-      edges_max_children_per_outline: settings.maxOutlineChildren.toString(),
-      // Nieuwe verbeterde cijferherkenningsparameters
-      textord_space_size_is_variable: '0', // Vast formaat voor cijferruimtes
-      textord_tabfind_vertical_text: '0', // Geen verticale tekst verwachten
-      language_model_ngram_on: '0', // Ngram uitschakelen (deze is ontworpen voor normale taalherkenning)
-      textord_force_make_prop_words: '0', // Geen proportionele tekst forceren
-      textord_noise_rejwords: '1', // Woorden met veel ruis afwijzen
-      // Cijferspecifieke instellingen (als deze aanwezig zijn)
-      textord_noise_sizelimit: '0.5', // Kleinere ruislimiet voor cijfers
-      textord_noise_normratio: '8', // Hogere ruisverhouding voor beter filter
-      tessedit_single_match: '0', // Sta meerdere matches toe voor één karakter
-      dignorm_normalize_mode: settings.dignormNormalizeMode?.toString() || '8',
-      dignorm_adjust_non_space: settings.dignormAdjNonSpace ? '1' : '0',
-      dignorm_use_normalized_quad_moments: settings.dignormQuadMoments ? '1' : '0',
-    };
-    
-    // Combineer basis en aangepaste parameters
-    const combinedParams = { ...baseParams, ...customParams };
-    
-    // Pas parameters toe op de worker
     try {
-      await workerRef.current.setParameters(combinedParams);
-      console.log('OCR parameters toegepast:', combinedParams);
-      setScanFeedback('OCR instellingen bijgewerkt');
-      setTimeout(() => {
-        if (isStreaming) {
-          setScanFeedback('Camera actief, scannen gaat door...');
-        }
-      }, 1500);
+      const params = {
+        tessedit_char_whitelist: '0123456789',
+        tessedit_pageseg_mode: settings.pagesegMode.toString(),
+        tessedit_ocr_engine_mode: settings.engineMode.toString(),
+        textord_heavy_nr: settings.heavyNr ? '1' : '0',
+        classify_bln_numeric_mode: settings.numericMode ? '1' : '0',
+        preserve_interword_spaces: settings.preserveSpaces ? '1' : '0',
+      };
+      
+      await workerRef.current.setParameters(params);
+      console.log('OCR parameters toegepast:', params);
     } catch (error) {
       console.error('Fout bij het instellen van OCR parameters:', error);
     }
@@ -2868,8 +3022,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     setIsManualMode(false);
     startCamera();
   };
-
-  // Verwijder laatste cijfer van handmatige invoer
 
   // Verwijder laatste cijfer van handmatige invoer
   const removeLastDigit = () => {
@@ -2965,8 +3117,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
     );
   };
 
-  // Na de simulateGOCRRecognition functie, voor de getCameraContainerClass functie
-  
   // ChatGPT-verwerking voor tekstherkenning
   const processWithChatGPT = async (imageSource) => {
     try {
@@ -3074,7 +3224,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           newWidth = (img.width / img.height) * 512;
         }
         
-        // Centreer de afbeelding
+        // Bereken de coördinaten voor het plaatsen van de afbeelding
         const x = (512 - newWidth) / 2;
         const y = (512 - newHeight) / 2;
         
@@ -3089,199 +3239,6 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       img.src = imageSource;
     });
   };
-
-  // Voeg eerst een check toe in het useEffect om automatisch scannen alleen te starten als ChatGPT OCR niet geselecteerd is
-  // Zoek het useEffect dat startAutoScan aanroept
-  useEffect(() => {
-    if (isStreaming && !isManualMode) {
-      console.log('Camera is actief, automatisch scannen wordt gestart...');
-      // Debug status tonen
-      console.log('Debug modus:', showDebug ? 'AAN' : 'UIT');
-      // Niet automatisch scannen als ChatGPT OCR is geselecteerd
-      if (ocrEngine === 'chatgpt') {
-        console.log('ChatGPT OCR geselecteerd, automatisch scannen overgeslagen - gebruik de knop om een foto te maken');
-        setScanFeedback('Klik op de "Scan met ChatGPT" knop om een foto te maken en te analyseren');
-        stopAutoScan();
-      } else {
-        // Start het scannen met een korte vertraging om de camera tijd te geven om op te starten
-        setTimeout(() => {
-          startAutoScan();
-        }, 500);
-      }
-    } else {
-      console.log('Camera is niet actief of in handmatige modus, scannen wordt gestopt...');
-      stopAutoScan();
-    }
-    
-    return () => {
-      // Altijd stoppen bij unmount of verandering in afhankelijkheden
-      stopAutoScan();
-    };
-  }, [isStreaming, isManualMode, ocrEngine]);
-
-  // Voeg een functie toe voor het expliciet maken van een foto voor ChatGPT
-  // Plaats deze functie na de captureImage functie
-  const captureImageForChatGPT = async () => {
-    // Voorkom dubbele verwerking als er al een proces bezig is
-    if (isProcessing || !isStreaming) return;
-    
-    console.log("ChatGPT foto maken gestart...");
-    setScanFeedback('ChatGPT foto maken en verzenden...');
-    setIsProcessing(true);
-    
-    try {
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      
-      if (video && canvas) {
-        const context = canvas.getContext('2d', { willReadFrequently: true });
-        
-        // Pas canvas grootte aan voor optimale OCR met hogere pixeldichtheid
-        canvas.width = scanFrame.width * scanFrame.pixelDensity;
-        canvas.height = scanFrame.height * scanFrame.pixelDensity;
-        
-        // Bepaal de werkelijke afmetingen van het videoframe
-        const videoWidth = video.videoWidth;
-        const videoHeight = video.videoHeight;
-        
-        console.log(`Video afmetingen: ${videoWidth}x${videoHeight}`);
-        
-        // Bereken het middelpunt van de video
-        const centerX = videoWidth / 2;
-        const centerY = videoHeight / 2;
-        
-        // Bereken uitsnijdafmetingen
-        const cropWidth = scanFrame.width / cropZoomLevel;
-        const cropHeight = scanFrame.height / cropZoomLevel;
-        
-        console.log(`Uitsnijdgebied: ${cropWidth}x${cropHeight} met zoom ${cropZoomLevel}`);
-        
-        // Bereken de coördinaten voor het uitsnijden vanuit het midden
-        const frameX = centerX - (cropWidth / 2);
-        const frameY = centerY - (cropHeight / 2);
-        
-        // Trek alleen het gedeelte binnen het kader op de canvas
-        context.drawImage(
-          video,
-          frameX, frameY,
-          cropWidth, cropHeight,
-          0, 0,
-          canvas.width, canvas.height
-        );
-        
-        console.log("Afbeelding uitgesneden naar canvas");
-        
-        // Maak een kopie van originele afbeelding voor debug
-        if (showDebug) {
-          try {
-            const originalUrl = canvas.toDataURL('image/png');
-            setDebugImage("" + originalUrl);
-            console.log("Debug originele afbeelding ingesteld");
-          } catch (e) {
-            console.error("Fout bij opslaan originele debug afbeelding:", e);
-          }
-        }
-        
-        // Pas beeldverbetering toe, tenzij deze is uitgeschakeld
-        let processedCanvas = canvas;
-        if (!skipPreprocessing) {
-          processedCanvas = preprocessImage(canvas);
-          console.log("Afbeelding voorbewerkt");
-        } else if (showDebug) {
-          try {
-            const originalUrl = canvas.toDataURL('image/png');
-            setDebugProcessedImage("" + originalUrl);
-          } catch (e) {
-            console.error("Fout bij opslaan van onbewerkte afbeelding voor debug:", e);
-          }
-        }
-        
-        // Maak een kopie van het geoptimaliseerde beeld voor debug
-        if (showDebug) {
-          try {
-            const processedUrl = processedCanvas.toDataURL('image/png');
-            setDebugProcessedImage("" + processedUrl);
-            console.log("Debug bewerkte afbeelding ingesteld");
-          } catch (e) {
-            console.error("Fout bij opslaan verwerkte debug afbeelding:", e);
-          }
-        }
-        
-        // Verkrijg afbeelding voor ChatGPT verwerking
-        const imageSource = processedCanvas.toDataURL('image/png');
-        console.log("Image source lengte:", imageSource.length);
-        
-        // Verwerk de afbeelding met ChatGPT
-        setScanFeedback('Bezig met verwerken via ChatGPT Vision...');
-        console.log("Start ChatGPT aanroep...");
-        
-        try {
-          const data = await processWithChatGPT(imageSource);
-          console.log("ChatGPT antwoord ontvangen:", data);
-          
-          // Verwerk het OCR resultaat
-          const text = data.text.trim();
-          console.log("ChatGPT OCR tekst:", text);
-          console.log("ChatGPT OCR confidence:", data.confidence);
-          
-          if (text) {
-            // Valideer het gedetecteerde nummer
-            console.log("Valideren van nummer:", text);
-            const isValid = validateAndProcessNumber(text);
-            console.log("Nummer geldig:", isValid);
-            
-            setDetectedNumber(text);
-            // setIsValidNumber wordt nu aangeroepen in validateAndProcessNumber
-            
-            // Feedback over het resultaat
-            const feedbackText = isValid 
-              ? `✓ GELDIG: ${text} komt voor in de lijst!` 
-              : `✗ ONGELDIG: ${text} komt NIET voor in de lijst!`;
-            setScanFeedback(feedbackText);
-            
-            // Notificeer parent component
-            if (onNumberDetected) {
-              onNumberDetected(text, isValid);
-              console.log("Parent component genotificeerd over resultaat");
-            }
-            
-            // Pauzeer even voor gebruiker om resultaat te zien
-            setIsPaused(true);
-            setTimeout(() => {
-              setIsPaused(false);
-              setIsProcessing(false);
-              if (isStreaming) {
-                setScanFeedback('Klik op de "Scan met ChatGPT" knop om opnieuw te scannen');
-              }
-            }, 5000);
-          } else {
-            // Geen tekst gevonden
-            console.log("Geen cijfers gedetecteerd in ChatGPT antwoord");
-            setDetectedNumber('');
-            setIsValidNumber(null);
-            setScanFeedback('Geen cijfers gedetecteerd. Probeer opnieuw.');
-            setIsProcessing(false);
-          }
-        } catch (apiError) {
-          console.error("Fout tijdens ChatGPT API aanroep:", apiError);
-          setScanFeedback(`Fout tijdens ChatGPT verwerking: ${apiError.message}`);
-          setIsProcessing(false);
-        }
-      } else {
-        console.error("Video of canvas referentie ontbreekt");
-        setScanFeedback('Camera niet beschikbaar');
-        setIsProcessing(false);
-      }
-    } catch (error) {
-      console.error('Fout tijdens ChatGPT scannen:', error);
-      setScanFeedback(`Fout tijdens ChatGPT scannen: ${error.message}`);
-      setIsProcessing(false);
-    }
-  };
-
-
-
-
 
   // Pas de addDigit functie aan om de easter egg te activeren/deactiveren
   const addDigit = (digit) => {
