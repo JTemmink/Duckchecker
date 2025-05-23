@@ -1949,7 +1949,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
               setVerificationInProgress(true);
               
               // Onmiddellijk nog een keer scannen voor verificatie
-              setTimeout(() => {
+    setTimeout(() => {
                 setIsProcessing(false);
                 processingTimeRef.current = null;
                 captureImage(); // Roep zichzelf opnieuw aan voor verificatie
@@ -2010,7 +2010,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
       <div className="camera-container relative w-full h-full">
         {/* Gedetecteerd nummer boven camerabeeld met duidelijke validatie-indicatie */}
         {detectedNumber && (
-          <div className={`mb-4 text-center p-3 rounded-lg shadow-md w-full max-w-md ${
+          <div className={`mb-4 text-center p-3 rounded-lg shadow-md w-full max-w-md min-h-[120px] flex flex-col justify-center ${
             isValidNumber === true ? 'bg-green-100 border-2 border-green-500' : 
             isValidNumber === false ? 'bg-red-100 border-2 border-red-500' : 
             'bg-gray-100'
@@ -2021,7 +2021,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                 <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
                   {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
                 </div>
-                <div className="mt-1 text-red-600 font-bold animate-pulse">Controleer het nummer!</div>
+                <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
               </>
             )}
           </div>
@@ -2145,7 +2145,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
           )}
           
           {/* Indicator voor direct-naar-OCR modus */}
-          {skipPreprocessing && isStreaming && (
+          {false && skipPreprocessing && isStreaming && (
             <div className="absolute top-2 right-2 bg-green-500 text-white px-2 py-1 rounded-md text-xs font-bold">
               DIRECT NAAR OCR (standaard)
             </div>
@@ -2895,20 +2895,20 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     Reset
                   </button>
                 </div>
-                <input
-                  type="range"
-                  min="0"
+                          <input
+                            type="range"
+                            min="0"
                   max="100"
-                  step="1"
+                            step="1"
                   value={minOcrConfidence}
                   onChange={e => setMinOcrConfidence(parseInt(e.target.value))}
                   className="w-full h-1 mt-1"
                 />
                 <div className="text-xs text-gray-300 mt-1">
                   Alleen getallen met een OCR confidence van minimaal {minOcrConfidence}% worden gebruikt.
-                </div>
-              </div>
-
+                          </div>
+                        </div>
+                        
               {/* Dubbele OCR bevestiging instelling */}
               <div className="setting-group mt-2">
                 <div className="flex items-center mb-1">
@@ -2921,13 +2921,13 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   />
                   <label htmlFor="doubleOcrConfirmEnabled" className="text-sm font-bold text-yellow-300">
                     Vereis {doubleOcrConfirmCount}x dezelfde OCR-uitkomst achter elkaar
-                  </label>
+                          </label>
                 </div>
-                <input
-                  type="range"
+                          <input
+                            type="range"
                   min="2"
                   max="5"
-                  step="1"
+                            step="1"
                   value={doubleOcrConfirmCount}
                   onChange={e => setDoubleOcrConfirmCount(parseInt(e.target.value))}
                   className="w-full h-1 mt-1"
@@ -2937,9 +2937,9 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   {doubleOcrConfirmEnabled
                     ? `Een getal moet ${doubleOcrConfirmCount}x achter elkaar exact hetzelfde zijn voordat het gevalideerd wordt.`
                     : 'Direct valideren bij voldoende confidence.'}
-                </div>
-              </div>
-            </div>
+                          </div>
+                        </div>
+                      </div>
           </div>
         )}
         
@@ -3177,7 +3177,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     ? "✓ Dit nummer komt voor in de lijst!" 
                     : "✗ Dit nummer komt niet voor in de lijst."}
                 </div>
-                <div className="mt-1 text-red-600 font-bold animate-pulse">Controleer het nummer!</div>
+                <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
               </>
             ) : null}
           </div>
