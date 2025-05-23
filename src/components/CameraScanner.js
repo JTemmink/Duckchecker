@@ -2022,7 +2022,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                   <div className={`mt-2 font-bold ${isValidNumber ? 'text-green-700' : 'text-red-700'}`}>
                     {isValidNumber ? '✓ GELDIG NUMMER' : '✗ ONGELDIG NUMMER'}
                   </div>
-                  <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
+                  <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER OF HET NUMMER OVEREENKOMT MET DE EEND!</div>
                 </>
               )}
             </div>
@@ -3181,7 +3181,7 @@ export default function CameraScanner({ duckNumbers, onNumberDetected, initialMo
                     ? "✓ Dit nummer komt voor in de lijst!" 
                     : "✗ Dit nummer komt niet voor in de lijst."}
                 </div>
-                <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER HET NUMMER!</div>
+                <div className="mt-1 text-red-600 font-bold animate-pulse">CONTROLEER OF HET NUMMER OVEREENKOMT MET DE EEND!</div>
               </>
             ) : null}
           </div>
